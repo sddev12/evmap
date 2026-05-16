@@ -181,7 +181,12 @@ func TestFOC10_KWinBackendSelectedOnKDEPlasmaWayland(t *testing.T) {
 		startKWinPoller = origPoller
 	})
 	lookPath = func(file string) (string, error) {
-		return "/usr/bin/" + file, nil
+		switch file {
+		case "qdbus6", "xdotool":
+			return "/usr/bin/" + file, nil
+		default:
+			return "", errors.New("not found")
+		}
 	}
 	startKWinPoller = func(_ context.Context, _ string) (<-chan string, error) {
 		return make(chan string), nil
@@ -208,7 +213,12 @@ func TestFOC10_KWinDetectionCaseInsensitive(t *testing.T) {
 		startKWinPoller = origPoller
 	})
 	lookPath = func(file string) (string, error) {
-		return "/usr/bin/" + file, nil
+		switch file {
+		case "qdbus6", "xdotool":
+			return "/usr/bin/" + file, nil
+		default:
+			return "", errors.New("not found")
+		}
 	}
 	startKWinPoller = func(_ context.Context, _ string) (<-chan string, error) {
 		return make(chan string), nil
@@ -362,7 +372,7 @@ func TestNewKWinTrackerReturnsHelpfulErrorWhenXdotoolMissing(t *testing.T) {
 	}
 }
 
-func TestFindQDBusCommandFallsBackToQdbus(t *testing.T) {
+func TestFOC10_KWinFallsBackToQdbusWhenQdbus6Missing(t *testing.T) {
 	origLookPath := lookPath
 	t.Cleanup(func() { lookPath = origLookPath })
 	lookPath = func(file string) (string, error) {
