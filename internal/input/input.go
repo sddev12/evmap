@@ -77,7 +77,7 @@ func Discover() ([]string, error) {
 		}
 
 		ok, err := hasKeyCapability(fd, keyA)
-		closeDevice(fd) //nolint:errcheck // best-effort probe cleanup
+		closeDevice(fd) //nolint:errcheck // probing only; individual close failures should not abort discovery
 		if err != nil || !ok {
 			continue
 		}

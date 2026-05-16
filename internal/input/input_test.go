@@ -14,6 +14,12 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+const (
+	readEventTimeout = 300 * time.Millisecond
+	stopWaitTimeout  = 150 * time.Millisecond
+	noEventTimeout   = 120 * time.Millisecond
+)
+
 // TestINP01_DiscoverReturnsOnlyKeyboardDevices codifies INP-01.
 func TestINP01_DiscoverReturnsOnlyKeyboardDevices(t *testing.T) {
 	restore := mockInputDeps(t)
@@ -191,7 +197,7 @@ func TestINP05_ReadEventsDeliversKeyPressAndRelease(t *testing.T) {
 	cancel()
 	select {
 	case <-done:
-	case <-time.After(200 * time.Millisecond):
+	case <-time.After(stopWaitTimeout):
 		t.Fatal("ReadEvents did not stop after cancellation")
 	}
 }
@@ -222,13 +228,13 @@ func TestINP06_ReadEventsDropsEvMscEvents(t *testing.T) {
 	select {
 	case extra := <-ch:
 		t.Fatalf("unexpected extra event = %+v", extra)
-	case <-time.After(120 * time.Millisecond):
+	case <-time.After(noEventTimeout):
 	}
 
 	cancel()
 	select {
 	case <-done:
-	case <-time.After(200 * time.Millisecond):
+	case <-time.After(stopWaitTimeout):
 		t.Fatal("ReadEvents did not stop after cancellation")
 	}
 }
@@ -257,7 +263,7 @@ func TestINP07_ReadEventsStopsOnContextCancellationWithin100ms(t *testing.T) {
 		if elapsed := time.Since(start); elapsed > 100*time.Millisecond {
 			t.Fatalf("ReadEvents stop time = %s, want <= 100ms", elapsed)
 		}
-	case <-time.After(150 * time.Millisecond):
+	case <-time.After(stopWaitTimeout):
 		t.Fatal("ReadEvents did not return within 100ms of cancellation")
 	}
 }
@@ -371,7 +377,7 @@ func recvEvent(t *testing.T, ch <-chan InputEvent) InputEvent {
 	select {
 	case ev := <-ch:
 		return ev
-	case <-time.After(300 * time.Millisecond):
+	case <-time.After(readEventTimeout):
 		t.Fatal("timed out waiting for input event")
 		return InputEvent{}
 	}
