@@ -28,6 +28,8 @@ const (
 	iocDirshift  = iocSizeshift + iocSizebits
 
 	iocRead = 2
+
+	eviocgbitBase = 0x20
 )
 
 var (
@@ -217,7 +219,7 @@ func ioctlGetEventBits(fd int, evType uint16, bits []byte) error {
 	if len(bits) == 0 {
 		return nil
 	}
-	req := ioctlRead('E', uintptr(0x20+evType), uintptr(len(bits)))
+	req := ioctlRead('E', uintptr(eviocgbitBase+evType), uintptr(len(bits)))
 	_, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), req, uintptr(unsafe.Pointer(&bits[0])))
 	if errno != 0 {
 		return errno
