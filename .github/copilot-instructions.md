@@ -70,6 +70,22 @@ specs/
   config.md / input.md / output.md / focus.md / remapper.md / cli.md
 ```
 
+## Implementation Workflow
+
+When working on any issue or package, follow these steps in order — do not skip ahead to coding:
+
+1. **Read the spec** — open the relevant file in `specs/` and read it in full before touching any code.
+2. **Read existing code** — understand what is already implemented in the target package to avoid duplication or conflicts.
+3. **Write tests first** — create or update `<package>/<package>_test.go` with one test per `Given/When/Then` scenario *before* writing the implementation. Name each test after its scenario ID:
+   ```go
+   // TestCFG01_MinimalValidConfig codifies CFG-01.
+   func TestCFG01_MinimalValidConfig(t *testing.T) { ... }
+   ```
+4. **Implement** — write the minimum code needed to satisfy the tests. Do not add behaviour not described in the spec.
+5. **Cross-check** — confirm every acceptance criterion from the issue has a corresponding test and a passing implementation. Flag any spec ambiguity rather than inventing a resolution.
+
+Tests that require real hardware (`/dev/input`, `/dev/uinput`) must be in a separate file tagged `//go:build integration` so they are excluded from standard `go test ./...` runs in CI.
+
 ## Coding Conventions
 
 - Follow standard Go project layout; keep packages small and single-purpose.
@@ -78,7 +94,7 @@ specs/
 - Use `log/slog` for structured logging; honour the `log_level` field from config.
 - Wrap errors with `fmt.Errorf("…: %w", err)` and propagate upward. `log.Fatal` is only permitted in `main` or CLI entry points.
 - Use `context.Context` for cancellation and graceful shutdown.
-- Write one `_test.go` file per non-trivial package; test scenarios map 1-to-1 to the `Given/When/Then` behaviours in the spec.
+- Do not add comments, docstrings, or type annotations to code you did not change.
 
 ## Key Behaviour Requirements
 
