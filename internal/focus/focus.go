@@ -42,11 +42,17 @@ type Tracker interface {
 // Replaced in tests so that no real xprop process is needed.
 var startSpy = startX11Spy
 
+var (
+	lookPath        = exec.LookPath
+	commandContext  = exec.CommandContext
+	startKWinPoller = startKWinTitlePoller
+)
+
 // New returns a Tracker appropriate for the current desktop environment.
 // It detects the compositor by inspecting environment variables in this order:
 //  1. WAYLAND_DISPLAY + SWAYSOCK           → SwayTracker
 //  2. WAYLAND_DISPLAY + HYPRLAND_…         → HyprlandTracker
-//  3. WAYLAND_DISPLAY + KDE in XDG_…       → ErrUnimplemented (kwin stub)
+//  3. WAYLAND_DISPLAY + KDE in XDG_…       → KWinTracker
 //  4. DISPLAY set                          → X11Tracker
 //  5. neither                              → ErrNoDisplay
 //
@@ -74,7 +80,11 @@ func New() (Tracker, error) {
 			return newHyprlandTracker(ctx, cancel, ch), nil
 		}
 		if strings.Contains(strings.ToUpper(os.Getenv("XDG_CURRENT_DESKTOP")), "KDE") {
-			return nil, fmt.Errorf("kwin: %w", ErrUnimplemented)
+			tracker, err := newSystemKWinTracker()
+			if err != nil {
+				return nil, err
+			}
+			return tracker, nil
 		}
 		// Generic Wayland: fall through to X11Tracker via XWayland.
 	}
@@ -90,6 +100,44 @@ func New() (Tracker, error) {
 	}
 
 	return nil, ErrNoDisplay
+}
+
+// KWinTracker maintains the active XWayland window title on KDE Plasma
+// Wayland by polling KWin's D-Bus interface and resolving the X11 window title
+// with xdotool.
+type KWinTracker struct {
+	*X11Tracker
+}
+
+func newKWinTracker(ctx context.Context, cancel context.CancelFunc, titleCh <-chan string) *KWinTracker {
+	return &KWinTracker{X11Tracker: newX11Tracker(ctx, cancel, titleCh)}
+}
+
+func newSystemKWinTracker() (*KWinTracker, error) {
+	qdbusCmd, err := findQDBusCommand()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := lookPath("xdotool"); err != nil {
+		return nil, fmt.Errorf("kwin tracker requires xdotool; install it with: sudo apt install xdotool: %w", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	titleCh, err := startKWinPoller(ctx, qdbusCmd)
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("kwin tracker: %w", err)
+	}
+	return newKWinTracker(ctx, cancel, titleCh), nil
+}
+
+func findQDBusCommand() (string, error) {
+	for _, candidate := range []string{"qdbus6", "qdbus"} {
+		if _, err := lookPath(candidate); err == nil {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("kwin tracker requires qdbus6 or qdbus; install qt6-tools-qdbus (or qdbus on older distros)")
 }
 
 // X11Tracker maintains the active X11 window title by subscribing to
@@ -158,6 +206,57 @@ func (t *X11Tracker) Close() error {
 	t.cancel()
 	<-t.done
 	return nil
+}
+
+func startKWinTitlePoller(ctx context.Context, qdbusCmd string) (<-chan string, error) {
+	ch := make(chan string, 1)
+	go func() {
+		defer close(ch)
+
+		ticker := time.NewTicker(100 * time.Millisecond)
+		defer ticker.Stop()
+
+		for {
+			title, err := getKWinWindowTitle(ctx, qdbusCmd)
+			if err == nil {
+				select {
+				case ch <- title:
+				case <-ctx.Done():
+					return
+				}
+			}
+
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+	return ch, nil
+}
+
+func getKWinWindowTitle(ctx context.Context, qdbusCmd string) (string, error) {
+	out, err := commandContext(ctx, qdbusCmd, "org.kde.KWin", "/KWin", "activeWindow").Output()
+	if err != nil {
+		return "", fmt.Errorf("%s activeWindow: %w", qdbusCmd, err)
+	}
+
+	windowID := strings.TrimSpace(string(out))
+	if windowID == "" || windowID == "0x0" || windowID == "0" {
+		return "", fmt.Errorf("no active X11 window")
+	}
+
+	out, err = commandContext(ctx, "xdotool", "getwindowname", windowID).Output()
+	if err != nil {
+		return "", fmt.Errorf("xdotool getwindowname %s: %w", windowID, err)
+	}
+
+	title := strings.TrimSpace(string(out))
+	if title == "" {
+		return "", fmt.Errorf("empty window title for %s", windowID)
+	}
+	return title, nil
 }
 
 // startX11Spy starts xprop -spy -root _NET_ACTIVE_WINDOW and returns a channel
