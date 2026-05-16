@@ -365,9 +365,6 @@ func TestRMP08_ReloadReplacesKeymapWithoutRestart(t *testing.T) {
 		{Type: input.EvKey, Code: keyUp, Value: 1},
 	}
 
-	// Override ReadEvents to wait for the trigger before sending.
-	var triggerOnce sync.Once
-	_ = triggerOnce
 	customIn := &triggeredInput{
 		events:  in.events,
 		trigger: trigger,
