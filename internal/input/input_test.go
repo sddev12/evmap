@@ -15,9 +15,10 @@ import (
 )
 
 const (
-	readEventTimeout = 300 * time.Millisecond
-	stopWaitTimeout  = 150 * time.Millisecond
-	noEventTimeout   = 120 * time.Millisecond
+	readEventTimeout       = 300 * time.Millisecond
+	stopWaitTimeout        = 150 * time.Millisecond
+	noEventTimeout         = 120 * time.Millisecond
+	maxCancellationLatency = 100 * time.Millisecond
 )
 
 // TestINP01_DiscoverReturnsOnlyKeyboardDevices codifies INP-01.
@@ -39,7 +40,7 @@ func TestINP01_DiscoverReturnsOnlyKeyboardDevices(t *testing.T) {
 	}
 	ioctlGetBits = func(fd int, evType uint16, bits []byte) error {
 		if fd == pathToFD[keyboardPath] {
-			bits[keyA/8] |= 1 << (keyA % 8)
+			bits[keyCodeA/8] |= 1 << (keyCodeA % 8)
 		}
 		return nil
 	}
@@ -181,8 +182,8 @@ func TestINP05_ReadEventsDeliversKeyPressAndRelease(t *testing.T) {
 		d.ReadEvents(ctx, ch)
 	}()
 
-	writeEvent(t, writer, InputEvent{Type: EvKey, Code: keyA, Value: 1})
-	writeEvent(t, writer, InputEvent{Type: EvKey, Code: keyA, Value: 0})
+	writeEvent(t, writer, InputEvent{Type: EvKey, Code: keyCodeA, Value: 1})
+	writeEvent(t, writer, InputEvent{Type: EvKey, Code: keyCodeA, Value: 0})
 
 	gotPress := recvEvent(t, ch)
 	gotRelease := recvEvent(t, ch)
@@ -219,7 +220,7 @@ func TestINP06_ReadEventsDropsEvMscEvents(t *testing.T) {
 	}()
 
 	writeEvent(t, writer, InputEvent{Type: EvMsc, Code: 4, Value: 1})
-	writeEvent(t, writer, InputEvent{Type: EvKey, Code: keyA, Value: 1})
+	writeEvent(t, writer, InputEvent{Type: EvKey, Code: keyCodeA, Value: 1})
 
 	got := recvEvent(t, ch)
 	if got.Type != EvKey || got.Value != 1 {
@@ -260,8 +261,8 @@ func TestINP07_ReadEventsStopsOnContextCancellationWithin100ms(t *testing.T) {
 
 	select {
 	case <-done:
-		if elapsed := time.Since(start); elapsed > 100*time.Millisecond {
-			t.Fatalf("ReadEvents stop time = %s, want <= 100ms", elapsed)
+		if elapsed := time.Since(start); elapsed > maxCancellationLatency {
+			t.Fatalf("ReadEvents stop time = %s, want <= %s", elapsed, maxCancellationLatency)
 		}
 	case <-time.After(stopWaitTimeout):
 		t.Fatal("ReadEvents did not return within 100ms of cancellation")

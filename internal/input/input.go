@@ -15,7 +15,7 @@ import (
 // EVIOCGRAB grabs/releases exclusive access to a device. _IOW('E', 0x90, int).
 const EVIOCGRAB = 0x40044590
 
-const keyA uint16 = 30
+const keyCodeA uint16 = 30
 
 const (
 	iocNrbits   = 8
@@ -76,7 +76,7 @@ func Discover() ([]string, error) {
 			continue
 		}
 
-		ok, err := hasKeyCapability(fd, keyA)
+		ok, err := hasKeyCapability(fd, keyCodeA)
 		closeDevice(fd) //nolint:errcheck // probing only; individual close failures should not abort discovery
 		if err != nil || !ok {
 			continue
