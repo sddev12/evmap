@@ -222,7 +222,7 @@ func TestINP06_ReadEventsDropsEvMscEvents(t *testing.T) {
 	select {
 	case extra := <-ch:
 		t.Fatalf("unexpected extra event = %+v", extra)
-	case <-time.After(60 * time.Millisecond):
+	case <-time.After(120 * time.Millisecond):
 	}
 
 	cancel()
@@ -287,6 +287,7 @@ func TestINP08_CloseReleasesGrab(t *testing.T) {
 			released[fd] = true
 			return nil
 		}
+		// Simulate another process successfully taking a new grab after release.
 		if value == 1 && released[fd] {
 			return nil
 		}
