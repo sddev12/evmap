@@ -26,6 +26,12 @@ var (
 	ErrClosed = errors.New("tracker is closed")
 )
 
+const (
+	kwinPollInterval  = 100 * time.Millisecond
+	noActiveWindowHex = "0x0"
+	noActiveWindowDec = "0"
+)
+
 // Tracker reports whether the target window currently has focus.
 type Tracker interface {
 	// IsFocused returns true if the window whose title contains targetTitle
@@ -216,7 +222,7 @@ func startKWinTitlePoller(ctx context.Context, qdbusCmd string) (<-chan string, 
 	go func() {
 		defer close(ch)
 
-		ticker := time.NewTicker(100 * time.Millisecond)
+		ticker := time.NewTicker(kwinPollInterval)
 		defer ticker.Stop()
 
 		for {
@@ -246,7 +252,7 @@ func getKWinWindowTitle(ctx context.Context, qdbusCmd string) (string, error) {
 	}
 
 	windowID := strings.TrimSpace(string(out))
-	if windowID == "" || windowID == "0x0" || windowID == "0" {
+	if windowID == "" || windowID == noActiveWindowHex || windowID == noActiveWindowDec {
 		return "", fmt.Errorf("no active X11 window")
 	}
 
