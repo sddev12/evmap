@@ -2,6 +2,7 @@ package output
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -68,6 +69,8 @@ type Device struct {
 	file *os.File // fd wrapped as an io.Writer so binary.Write can use it
 }
 
+var unixOpen = unix.Open
+
 // Open creates a new uinput virtual keyboard device.
 // The kernel registers it under /dev/input/eventN and notifies udev/libinput,
 // making it visible to the rest of the system as an ordinary keyboard.
@@ -77,8 +80,11 @@ func Open() (*Device, error) {
 	// O_NONBLOCK — writes return EAGAIN instead of blocking if the kernel
 	//   event buffer is temporarily full (in practice they complete instantly).
 	// 0 — creation mode bits; irrelevant because we are opening an existing node.
-	fd, err := unix.Open("/dev/uinput", unix.O_WRONLY|unix.O_NONBLOCK, 0)
+	fd, err := unixOpen("/dev/uinput", unix.O_WRONLY|unix.O_NONBLOCK, 0)
 	if err != nil {
+		if errors.Is(err, unix.EACCES) || errors.Is(err, unix.EPERM) {
+			return nil, fmt.Errorf("open /dev/uinput: output: permission denied on /dev/uinput — add yourself to the 'uinput' group and ensure the udev rule is in place: %w", err)
+		}
 		return nil, fmt.Errorf("open /dev/uinput: %w", err)
 	}
 
