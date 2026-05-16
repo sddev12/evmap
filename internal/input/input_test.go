@@ -293,7 +293,7 @@ func TestINP08_CloseReleasesGrab(t *testing.T) {
 			released[fd] = true
 			return nil
 		}
-		// Simulate another process successfully taking a new grab after release.
+		// Simulate that a new grab attempt succeeds once Close has released grab ownership.
 		if value == 1 && released[fd] {
 			return nil
 		}
