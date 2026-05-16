@@ -137,7 +137,7 @@ func findQDBusCommand() (string, error) {
 			return candidate, nil
 		}
 	}
-	return "", fmt.Errorf("kwin tracker requires qdbus6 or qdbus; install qt6-tools-qdbus (or qdbus on older distros)")
+	return "", fmt.Errorf("kwin tracker requires qdbus6 or qdbus; install it with: sudo apt install qt6-tools-qdbus (or install qdbus on older distros)")
 }
 
 // X11Tracker maintains the active X11 window title by subscribing to

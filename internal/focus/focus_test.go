@@ -381,7 +381,8 @@ func TestFindQDBusCommandFallsBackToQdbus(t *testing.T) {
 	}
 }
 
-// waitForFocus polls IsFocused until it returns true or the deadline is exceeded.
+// waitForFocus polls Tracker.IsFocused until it returns true or the deadline is
+// exceeded. It is shared by the X11Tracker and KWinTracker focus-behaviour tests.
 func waitForFocus(tracker Tracker, title string, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
