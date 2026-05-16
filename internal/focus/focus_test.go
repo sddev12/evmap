@@ -3,6 +3,8 @@ package focus
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -202,7 +204,7 @@ func TestFOC10_KWinDetectionCaseInsensitive(t *testing.T) {
 }
 
 // waitForFocus polls IsFocused until it returns true or the deadline is exceeded.
-func waitForFocus(tracker *X11Tracker, title string, timeout time.Duration) bool {
+func waitForFocus(tracker Tracker, title string, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		focused, err := tracker.IsFocused(title)
@@ -215,4 +217,118 @@ func waitForFocus(tracker *X11Tracker, title string, timeout time.Duration) bool
 		time.Sleep(2 * time.Millisecond)
 	}
 	return false
+}
+
+// TestFOC06_SwayBackendSelectedWhenSwaySocketSet codifies FOC-06.
+func TestFOC06_SwayBackendSelectedWhenSwaySocketSet(t *testing.T) {
+	t.Setenv("WAYLAND_DISPLAY", "wayland-0")
+	t.Setenv("SWAYSOCK", "/run/user/1000/sway-ipc.sock")
+	t.Setenv("HYPRLAND_INSTANCE_SIGNATURE", "")
+	t.Setenv("XDG_CURRENT_DESKTOP", "")
+	t.Setenv("DISPLAY", "")
+
+	orig := startSwaySubscribe
+	t.Cleanup(func() { startSwaySubscribe = orig })
+	startSwaySubscribe = func(_ context.Context) (<-chan string, error) {
+		return make(chan string), nil
+	}
+
+	tracker, err := New()
+	if err != nil {
+		t.Fatalf("New() returned error: %v", err)
+	}
+	defer tracker.Close()
+
+	if _, ok := tracker.(*SwayTracker); !ok {
+		t.Fatalf("expected *SwayTracker, got %T", tracker)
+	}
+}
+
+// TestFOC06_SwayTrackerIsFocusedReturnsTrueWhenFocused tests that SwayTracker
+// returns true when the current title matches.
+func TestFOC06_SwayTrackerIsFocusedReturnsTrueWhenFocused(t *testing.T) {
+	titleCh := make(chan string, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	tracker := newSwayTracker(ctx, cancel, titleCh)
+	defer tracker.Close()
+
+	titleCh <- "Hearts of Iron IV"
+
+	if !waitForFocus(tracker, "Hearts of Iron IV", 150*time.Millisecond) {
+		t.Fatal("expected SwayTracker.IsFocused to return true within 150 ms")
+	}
+}
+
+// TestFOC06_SwayTrackerIsFocusedCaseInsensitive tests that SwayTracker
+// title matching is case-insensitive (FOC-08 applied to Sway backend).
+func TestFOC06_SwayTrackerIsFocusedCaseInsensitive(t *testing.T) {
+	titleCh := make(chan string, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	tracker := newSwayTracker(ctx, cancel, titleCh)
+	defer tracker.Close()
+
+	titleCh <- "hearts of iron iv"
+
+	if !waitForFocus(tracker, "Hearts of Iron IV", 150*time.Millisecond) {
+		t.Fatal("expected case-insensitive match to return true for SwayTracker")
+	}
+}
+
+// TestFOC06_SwayTrackerCloseReleasesResources tests that Close stops the
+// background goroutine and subsequent IsFocused calls return ErrClosed.
+func TestFOC06_SwayTrackerCloseReleasesResources(t *testing.T) {
+	titleCh := make(chan string)
+	ctx, cancel := context.WithCancel(context.Background())
+	tracker := newSwayTracker(ctx, cancel, titleCh)
+
+	if err := tracker.Close(); err != nil {
+		t.Fatalf("Close() returned error: %v", err)
+	}
+
+	_, err := tracker.IsFocused("anything")
+	if err == nil {
+		t.Fatal("expected error after Close, got nil")
+	}
+	if !errors.Is(err, ErrClosed) {
+		t.Fatalf("expected ErrClosed, got %v", err)
+	}
+}
+
+// TestFOC06_SwayTrackerParsesJSONEvents tests that startSwaySpy correctly
+// parses swaymsg JSON output and extracts container names from focus events,
+// ignoring non-focus events.
+func TestFOC06_SwayTrackerParsesJSONEvents(t *testing.T) {
+	// Build a fake swaymsg that emits a sequence of JSON events.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+
+	ch := make(chan string, 8)
+	go parseSwaymsgOutput(ctx, pr, ch)
+
+	// Write: confirmation, non-focus event, focus event.
+	events := []string{
+		`{"success":true}`,
+		`{"change":"title","container":{"name":"ignored"}}`,
+		`{"change":"focus","container":{"name":"Hearts of Iron IV"}}`,
+	}
+	for _, ev := range events {
+		if _, err := fmt.Fprintln(pw, ev); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+	pw.Close()
+
+	select {
+	case title := <-ch:
+		if title != "Hearts of Iron IV" {
+			t.Fatalf("expected 'Hearts of Iron IV', got %q", title)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("timed out waiting for focus event to be parsed")
+	}
 }
