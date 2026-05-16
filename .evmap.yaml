@@ -1,0 +1,15 @@
+---
+log_level: DEBUG
+
+keymaps:
+  - from: up
+    to: w
+
+  - from: down
+    to: s
+
+  - from: left
+    to: a
+
+  - from: right
+    to: d
