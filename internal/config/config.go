@@ -26,9 +26,14 @@ type Keymap struct {
 	To   string `mapstructure:"to"`
 }
 
+type FocusConfig struct {
+	WindowTitle string `mapstructure:"window_title"`
+}
+
 type AppConfig struct {
-	LogLevel string   `mapstructure:"log_level"`
-	KeyMaps  []Keymap `mapstructure:"keymaps"`
+	LogLevel string      `mapstructure:"log_level"`
+	Focus    FocusConfig `mapstructure:"focus"`
+	KeyMaps  []Keymap    `mapstructure:"keymaps"`
 }
 
 func LookupKeyCode(name string) (uint16, bool) {
