@@ -3,14 +3,40 @@ package input
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"unsafe"
 
 	"golang.org/x/sys/unix"
 )
 
 // EVIOCGRAB grabs/releases exclusive access to a device. _IOW('E', 0x90, int).
 const EVIOCGRAB = 0x40044590
+
+const keyA uint16 = 30
+
+const (
+	iocNrbits   = 8
+	iocTypebits = 8
+	iocSizebits = 14
+
+	iocNrshift   = 0
+	iocTypeshift = iocNrshift + iocNrbits
+	iocSizeshift = iocTypeshift + iocTypebits
+	iocDirshift  = iocSizeshift + iocSizebits
+
+	iocRead = 2
+)
+
+var (
+	globEventDevices = filepath.Glob
+	openDevice       = unix.Open
+	closeDevice      = unix.Close
+	ioctlSetInt      = unix.IoctlSetInt
+	ioctlGetBits     = ioctlGetEventBits
+)
 
 // Event type constants from linux/input.h.
 const (
@@ -36,6 +62,31 @@ type Device struct {
 	path string
 }
 
+// Discover returns /dev/input/event* paths that report KEY_A support.
+func Discover() ([]string, error) {
+	paths, err := globEventDevices("/dev/input/event*")
+	if err != nil {
+		return nil, fmt.Errorf("discover devices: %w", err)
+	}
+
+	keyboards := make([]string, 0, len(paths))
+	for _, path := range paths {
+		fd, err := openDevice(path, unix.O_RDONLY|unix.O_NONBLOCK, 0)
+		if err != nil {
+			continue
+		}
+
+		ok, err := hasKeyCapability(fd, keyA)
+		closeDevice(fd) //nolint:errcheck // best-effort probe cleanup
+		if err != nil || !ok {
+			continue
+		}
+		keyboards = append(keyboards, path)
+	}
+
+	return keyboards, nil
+}
+
 // Open opens the evdev device at path and takes an exclusive grab so that no
 // other process receives events from it while it is held.
 func Open(path string) (*Device, error) {
@@ -44,8 +95,11 @@ func Open(path string) (*Device, error) {
 	// O_NONBLOCK — the fd will not block when no data is available; reads
 	//   return EAGAIN immediately instead. This is required for epoll-driven I/O.
 	// 0 — file-creation mode bits; ignored because we are opening an existing file.
-	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_NONBLOCK, 0)
+	fd, err := openDevice(path, unix.O_RDONLY|unix.O_NONBLOCK, 0)
 	if err != nil {
+		if errors.Is(err, unix.EACCES) || errors.Is(err, unix.EPERM) {
+			return nil, fmt.Errorf("permission denied on %s — add yourself to the 'input' group", path)
+		}
 		return nil, fmt.Errorf("open %s: %w", path, err)
 	}
 
@@ -53,8 +107,8 @@ func Open(path string) (*Device, error) {
 	// as the argument. EVIOCGRAB is a Linux evdev ioctl: value 1 means "grab"
 	// (take exclusive ownership), so no other process — including the X server
 	// or compositor — will receive events from this device while we hold it.
-	if err := unix.IoctlSetInt(fd, EVIOCGRAB, 1); err != nil {
-		unix.Close(fd) // release the fd before returning the error
+	if err := ioctlSetInt(fd, EVIOCGRAB, 1); err != nil {
+		closeDevice(fd) // release the fd before returning the error
 		return nil, fmt.Errorf("grab %s: %w", path, err)
 	}
 
@@ -72,7 +126,7 @@ func Open(path string) (*Device, error) {
 func (d *Device) Close() error {
 	// Passing 0 to EVIOCGRAB releases the exclusive grab, making the device
 	// available to other processes (e.g. the compositor) again.
-	unix.IoctlSetInt(d.fd, EVIOCGRAB, 0) //nolint:errcheck — best-effort on close
+	ioctlSetInt(d.fd, EVIOCGRAB, 0) //nolint:errcheck — best-effort on close
 	return d.file.Close()
 }
 
@@ -149,4 +203,28 @@ func (d *Device) ReadEvents(ctx context.Context, ch chan<- InputEvent) {
 			}
 		}
 	}
+}
+
+func hasKeyCapability(fd int, keyCode uint16) (bool, error) {
+	bits := make([]byte, int(keyCode/8)+1)
+	if err := ioctlGetBits(fd, EvKey, bits); err != nil {
+		return false, err
+	}
+	return bits[keyCode/8]&(1<<(keyCode%8)) != 0, nil
+}
+
+func ioctlGetEventBits(fd int, evType uint16, bits []byte) error {
+	if len(bits) == 0 {
+		return nil
+	}
+	req := ioctlRead('E', uintptr(0x20+evType), uintptr(len(bits)))
+	_, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), req, uintptr(unsafe.Pointer(&bits[0])))
+	if errno != 0 {
+		return errno
+	}
+	return nil
+}
+
+func ioctlRead(typ byte, nr, size uintptr) uintptr {
+	return (iocRead << iocDirshift) | (size << iocSizeshift) | (uintptr(typ) << iocTypeshift) | (nr << iocNrshift)
 }
