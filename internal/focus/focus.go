@@ -119,7 +119,7 @@ func newSystemKWinTracker() (*KWinTracker, error) {
 		return nil, err
 	}
 	if _, err := lookPath("xdotool"); err != nil {
-		return nil, fmt.Errorf("kwin tracker requires xdotool; install it with: sudo apt install xdotool: %w", err)
+		return nil, fmt.Errorf("kwin tracker requires xdotool; install it with sudo apt install xdotool: %w", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -132,12 +132,15 @@ func newSystemKWinTracker() (*KWinTracker, error) {
 }
 
 func findQDBusCommand() (string, error) {
+	var lastErr error
 	for _, candidate := range []string{"qdbus6", "qdbus"} {
 		if _, err := lookPath(candidate); err == nil {
 			return candidate, nil
+		} else {
+			lastErr = err
 		}
 	}
-	return "", fmt.Errorf("kwin tracker requires qdbus6 or qdbus; install it with: sudo apt install qt6-tools-qdbus (or install qdbus on older distros)")
+	return "", fmt.Errorf("kwin tracker requires qdbus6 or qdbus; install it with sudo apt install qt6-tools-qdbus (or install qdbus on older distros): %w", lastErr)
 }
 
 // X11Tracker maintains the active X11 window title by subscribing to
