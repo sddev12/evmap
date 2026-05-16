@@ -265,7 +265,7 @@ func TestINP07_ReadEventsStopsOnContextCancellationWithin100ms(t *testing.T) {
 			t.Fatalf("ReadEvents stop time = %s, want <= %s", elapsed, maxCancellationLatency)
 		}
 	case <-time.After(stopWaitTimeout):
-		t.Fatal("ReadEvents did not return within 100ms of cancellation")
+		t.Fatalf("ReadEvents did not return within %s (spec bound: %s)", stopWaitTimeout, maxCancellationLatency)
 	}
 }
 

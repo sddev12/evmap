@@ -228,5 +228,6 @@ func ioctlGetEventBits(fd int, evType uint16, bits []byte) error {
 }
 
 func ioctlRead(typ byte, nr, size uintptr) uintptr {
+	// Implements Linux _IOR(type, nr, size) ioctl encoding from <asm-generic/ioctl.h>.
 	return (iocRead << iocDirshift) | (size << iocSizeshift) | (uintptr(typ) << iocTypeshift) | (nr << iocNrshift)
 }
