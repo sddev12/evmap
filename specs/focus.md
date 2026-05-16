@@ -50,9 +50,11 @@ func New() (Tracker, error)
 |-----------|---------------|
 | `WAYLAND_DISPLAY` is set and `SWAYSOCK` is set | `SwayTracker` |
 | `WAYLAND_DISPLAY` is set and `HYPRLAND_INSTANCE_SIGNATURE` is set | `HyprlandTracker` |
-| `WAYLAND_DISPLAY` is set (generic) | `WlrootsFocusTracker` (via `wlr-foreign-toplevel-management` protocol, if available) or fall back to polling `wl-rootsctl` if present |
-| `DISPLAY` is set | `X11Tracker` |
+| `WAYLAND_DISPLAY` is set and `XDG_CURRENT_DESKTOP` contains `KDE` (case-insensitive) | `KWinTracker` |
+| `DISPLAY` is set | `X11Tracker` (covers pure X11 sessions and any Wayland session with XWayland, including GNOME on Wayland, Pop!\_OS, Fedora) |
 | Neither set | Return `ErrNoDisplay` |
+
+The generic `WAYLAND_DISPLAY`-only case (no compositor-specific environment variable matched) falls through to `X11Tracker` if `DISPLAY` is also set, or returns `ErrNoDisplay` if not. This covers GNOME on Wayland, where Steam/Proton games run as XWayland applications and are visible to `xdotool` via the `DISPLAY` socket.
 
 ---
 
@@ -101,6 +103,33 @@ Returns `true` if the most recently seen focused container's `name` contains `ta
 ## Hyprland Tracker (`HyprlandTracker`)
 
 Uses `hyprctl activewindow -j` (polled every 100 ms, or via the Hyprland event socket at `$XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE/.socket2.sock`) to get the active window title.
+
+---
+
+## KWin Tracker (`KWinTracker`)
+
+**Selected when:** `WAYLAND_DISPLAY` is set and `XDG_CURRENT_DESKTOP` contains `KDE` (case-insensitive substring match).
+
+Covers KDE Plasma on Wayland, including Kubuntu, Manjaro KDE, and SteamOS (desktop mode). Steam and Proton games run as XWayland applications on these environments; the tracker exploits this by querying the active X11 window ID via KWin's D-Bus interface and resolving its title via `xdotool`.
+
+### Polling Loop
+
+```
+every 100 ms:
+    window_id   = qdbus org.kde.KWin /KWin activeWindow   # returns X11 window ID
+    window_name = xdotool getwindowname <window_id>
+    update internal focused state
+```
+
+The implementation tries `qdbus6` first, then falls back to `qdbus`. If neither is available, `New()` returns an error directing the user to install the appropriate Qt tools package (`qt6-tools-qdbus` on Kubuntu).
+
+`xdotool` must be installed; if absent, `New()` returns an error with installation instructions (`sudo apt install xdotool`).
+
+This approach covers XWayland applications (all Steam/Proton games). Native Wayland windows that are not XWayland clients will not be visible to `xdotool`; for gaming use cases this is acceptable since all Steam/Proton games run under XWayland.
+
+### `IsFocused(targetTitle string) (bool, error)`
+
+Returns `true` if the cached active window name contains `targetTitle` (case-insensitive).
 
 ---
 
@@ -156,10 +185,10 @@ type AppConfig struct {
 **When** the target window gains or loses focus  
 **Then** `IsFocused` returns the updated state within 150 ms
 
-### FOC-05 — X11 backend is selected when DISPLAY is set and WAYLAND_DISPLAY is not
-**Given** `DISPLAY=:0` is set in the environment and `WAYLAND_DISPLAY` is unset  
+### FOC-05 — X11 backend is selected for X11 sessions and as XWayland fallback
+**Given** `DISPLAY` is set and the environment does not match Sway, Hyprland, or KDE  
 **When** `New()` is called  
-**Then** an `X11Tracker` is returned
+**Then** an `X11Tracker` is returned (covers pure X11 sessions, GNOME on Wayland, and any other Wayland compositor with XWayland)
 
 ### FOC-06 — Sway backend is selected when SWAYSOCK is set
 **Given** `WAYLAND_DISPLAY` and `SWAYSOCK` are both set  
@@ -180,3 +209,8 @@ type AppConfig struct {
 **Given** a running tracker  
 **When** `Close()` is called  
 **Then** all background goroutines and external process handles are released; subsequent calls to `IsFocused` return an error
+
+### FOC-10 — KWin backend is selected on KDE Plasma Wayland
+**Given** `WAYLAND_DISPLAY` is set and `XDG_CURRENT_DESKTOP` contains `KDE`  
+**When** `New()` is called  
+**Then** a `KWinTracker` is returned
