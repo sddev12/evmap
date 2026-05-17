@@ -109,26 +109,30 @@ func (r *Remapper) Run(ctx context.Context) error {
 func (r *Remapper) processEvent(ev input.InputEvent) {
 	// Forward SYN events as-is to preserve original event batching.
 	if ev.Type == input.EvSyn {
+		slog.Debug("sync event")
 		r.out.WriteSyn(ev.TimeSec, ev.TimeUsec) //nolint:errcheck
 		return
 	}
 
+	// Forward non-key events (like EV_MSC scan codes) unconditionally.
 	if ev.Type != input.EvKey {
 		slog.Debug("non-key event", "type", ev.Type, "code", ev.Code, "value", ev.Value)
 		r.out.WriteEvent(ev.TimeSec, ev.TimeUsec, ev.Type, ev.Code, ev.Value) //nolint:errcheck
 		return
 	}
 
+	// Check if we should bypass remapping due to window focus.
 	if r.focusTracker != nil {
 		focused, err := r.focusTracker.IsFocused(r.targetTitle)
 		if err != nil || !focused {
-			slog.Debug("key suppressed (not focused)", "code", ev.Code, "value", ev.Value)
+			// Game not in focus — emit original event unchanged so keyboard works normally.
+			slog.Debug("key not remapped (not focused)", "code", ev.Code, "value", ev.Value)
 			r.out.WriteEvent(ev.TimeSec, ev.TimeUsec, ev.Type, ev.Code, ev.Value) //nolint:errcheck
-			// Don't emit SYN here - let the original SYN come through
 			return
 		}
 	}
 
+	// Apply keymap if this key is mapped, otherwise pass through unchanged.
 	r.mu.RLock()
 	mapped, ok := r.keymap[ev.Code]
 	r.mu.RUnlock()
@@ -142,7 +146,6 @@ func (r *Remapper) processEvent(ev input.InputEvent) {
 	}
 
 	r.out.WriteEvent(ev.TimeSec, ev.TimeUsec, ev.Type, outCode, ev.Value) //nolint:errcheck
-	// Don't emit SYN here - let the original SYN come through
 }
 
 // Reload replaces the active keymap with the provided one without restarting
