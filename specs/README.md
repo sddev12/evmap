@@ -12,12 +12,13 @@ Remapping is active **only while the target game window is in focus**, so normal
 
 | File | Subsystem | Status |
 |------|-----------|--------|
-| [config.md](config.md) | Config loading & validation | Draft |
-| [input.md](input.md) | evdev device discovery & event reading | Draft |
-| [output.md](output.md) | uinput virtual keyboard & event emission | Draft |
-| [focus.md](focus.md) | Active-window detection & focus tracking | Draft |
-| [remapper.md](remapper.md) | Core remapping loop | Draft |
-| [cli.md](cli.md) | CLI behaviour & flags | Draft |
+| [config.md](config.md) | Config loading & validation | Complete |
+| [input.md](input.md) | evdev device discovery & event reading | Complete |
+| [output.md](output.md) | uinput virtual keyboard & event emission | Complete |
+| [focus.md](focus.md) | Active-window detection & focus tracking | Complete |
+| [remapper.md](remapper.md) | Core remapping loop | Complete |
+| [cli.md](cli.md) | CLI behaviour & flags | Complete |
+| [ci.md](ci.md) | CI/CD workflows & release automation | Draft |
 
 ## Package Layout
 
@@ -25,15 +26,26 @@ Remapping is active **only while the target game window is in focus**, so normal
 main.go                  entry point → cmd.Execute()
 cmd/
   root.go                Cobra root command; Viper config init; launches remapper
+  root_test.go           CLI integration tests
 internal/
   config/
     config.go            AppConfig + Keymap structs (mapstructure tags)
+    config_test.go       Config validation tests
   input/
     input.go             evdev Device: open, grab, read events
+    input_test.go        Input device tests
   output/
     output.go            uinput Device: create virtual keyboard, emit events
-  focus/                 (not yet implemented) window-focus tracker
-  remapper/              (not yet implemented) remapping loop
+    output_test.go       uinput tests
+  focus/
+    focus.go             Tracker interface + compositor detection
+    focus_test.go        Focus tracking tests
+    sway.go              Sway compositor backend
+    hyprland.go          Hyprland compositor backend
+    kwin.go              KWin compositor backend
+  remapper/
+    remapper.go          Core remapping loop with hot-reload
+    remapper_test.go     Remapper tests
 ```
 
 ## Development Conventions
