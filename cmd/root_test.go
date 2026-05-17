@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"evmap/internal/input"
 	"os"
 	"path/filepath"
 	"strings"
@@ -272,7 +273,7 @@ func TestCLI08_DeviceFlagBypassesDiscovery(t *testing.T) {
 	devicePath := "/dev/input/event4"
 
 	// selectInputDevice should return the specified device directly
-	selected, err := selectInputDevice(devicePath, []string{})
+	selected, err := selectInputDevice(devicePath, []input.DeviceInfo{})
 	if err != nil {
 		t.Fatalf("unexpected error when device flag is set: %v", err)
 	}
@@ -282,7 +283,10 @@ func TestCLI08_DeviceFlagBypassesDiscovery(t *testing.T) {
 	}
 
 	// Verify discovery list is ignored when device flag is set
-	discoveryList := []string{"/dev/input/event0", "/dev/input/event1"}
+	discoveryList := []input.DeviceInfo{
+		{Path: "/dev/input/event0", Name: "Keyboard 0"},
+		{Path: "/dev/input/event1", Name: "Keyboard 1"},
+	}
 	selected, err = selectInputDevice(devicePath, discoveryList)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
