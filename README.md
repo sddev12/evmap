@@ -30,7 +30,8 @@ Many games—especially older titles or those from studios like Paradox Interact
 ## 🔧 Requirements
 
 - **Linux kernel 2.6+** (evdev and uinput support)
-- **Go 1.26+** (for building from source)
+- **curl or wget** (for downloading pre-built binaries)
+- **Go 1.26+** (optional; only required if building from source)
 - **User permissions**: membership in `input` and `uinput` groups
 - **One of the following compositors** (for focus detection):
   - X11 with `xprop` installed
@@ -46,7 +47,7 @@ Many games—especially older titles or those from studios like Paradox Interact
 
 ### Automated Installation (Recommended)
 
-The easiest way to install evmap is using the automated installation script:
+The easiest way to install evmap is using the automated installation script, which downloads a pre-built binary for your architecture:
 
 ```bash
 git clone https://github.com/sddev12/evmap.git
@@ -55,7 +56,7 @@ cd evmap
 ```
 
 The script will:
-- ✅ Build the binary from source
+- ✅ Download the latest pre-built binary (or build from source if unavailable)
 - ✅ Install to `/usr/local/bin/`
 - ✅ Set up user permissions (input/uinput groups)
 - ✅ Configure udev rules
@@ -63,12 +64,15 @@ The script will:
 - ✅ Optionally configure boot loading
 - ✅ Verify the installation
 
+**Supported architectures:** linux/amd64, linux/arm64, linux/arm (v7)
+
 **Options:**
 ```bash
-./install.sh -y              # Non-interactive (accept all defaults)
-./install.sh --config        # Generate sample config file
-./install.sh --no-boot-load  # Skip boot loading setup
-./install.sh --help          # Show all options
+./install.sh -y                  # Non-interactive (accept all defaults)
+./install.sh --build-from-source # Build from source instead of downloading
+./install.sh --config            # Generate sample config file
+./install.sh --no-boot-load      # Skip boot loading setup
+./install.sh --help              # Show all options
 ```
 
 **After installation:** Log out and log back in for group membership to take effect.
