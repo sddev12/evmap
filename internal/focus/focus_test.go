@@ -332,3 +332,131 @@ func TestFOC06_SwayTrackerParsesJSONEvents(t *testing.T) {
 		t.Fatal("timed out waiting for focus event to be parsed")
 	}
 }
+
+// TestFOC11_HyprlandBackendSelectedWhenSignatureSet codifies FOC-11:
+// Given WAYLAND_DISPLAY and HYPRLAND_INSTANCE_SIGNATURE are both set,
+// New() must return a *HyprlandTracker.
+func TestFOC11_HyprlandBackendSelectedWhenSignatureSet(t *testing.T) {
+	t.Setenv("WAYLAND_DISPLAY", "wayland-0")
+	t.Setenv("HYPRLAND_INSTANCE_SIGNATURE", "abc123def456")
+	t.Setenv("SWAYSOCK", "")
+	t.Setenv("XDG_CURRENT_DESKTOP", "")
+
+	orig := startHyprlandWatcher
+	t.Cleanup(func() { startHyprlandWatcher = orig })
+	startHyprlandWatcher = func(_ context.Context) (<-chan string, error) {
+		return make(chan string), nil
+	}
+
+	tracker, err := New()
+	if err != nil {
+		t.Fatalf("New() returned error: %v", err)
+	}
+	defer tracker.Close()
+
+	if _, ok := tracker.(*HyprlandTracker); !ok {
+		t.Fatalf("expected *HyprlandTracker, got %T", tracker)
+	}
+}
+
+// TestHyprlandTracker_IsFocusedReturnsTrueWhenFocused verifies that IsFocused
+// returns true within 150 ms of a title arriving on the channel.
+func TestHyprlandTracker_IsFocusedReturnsTrueWhenFocused(t *testing.T) {
+	titleCh := make(chan string, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	tracker := newHyprlandTracker(ctx, cancel, titleCh)
+	defer tracker.Close()
+
+	titleCh <- "Hearts of Iron IV"
+
+	if !waitForFocus(tracker, "Hearts of Iron IV", 150*time.Millisecond) {
+		t.Fatal("expected IsFocused to return true within 150 ms")
+	}
+}
+
+// TestHyprlandTracker_IsFocusedReturnsFalseAfterFocusLost verifies that
+// IsFocused returns false after a different window title is received.
+func TestHyprlandTracker_IsFocusedReturnsFalseAfterFocusLost(t *testing.T) {
+	titleCh := make(chan string, 2)
+	ctx, cancel := context.WithCancel(context.Background())
+	tracker := newHyprlandTracker(ctx, cancel, titleCh)
+	defer tracker.Close()
+
+	titleCh <- "Hearts of Iron IV"
+	if !waitForFocus(tracker, "Hearts of Iron IV", 150*time.Millisecond) {
+		t.Fatal("tracker did not pick up initial focus")
+	}
+
+	titleCh <- "Firefox"
+
+	deadline := time.Now().Add(150 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		focused, err := tracker.IsFocused("Hearts of Iron IV")
+		if err != nil {
+			t.Fatalf("IsFocused: %v", err)
+		}
+		if !focused {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("expected IsFocused to return false after focus moved to another window")
+}
+
+// TestHyprlandTracker_IsFocusedCaseInsensitive verifies case-insensitive title
+// matching for the Hyprland tracker (FOC-08 for the Hyprland backend).
+func TestHyprlandTracker_IsFocusedCaseInsensitive(t *testing.T) {
+	titleCh := make(chan string, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	tracker := newHyprlandTracker(ctx, cancel, titleCh)
+	defer tracker.Close()
+
+	titleCh <- "hearts of iron iv"
+
+	if !waitForFocus(tracker, "Hearts of Iron IV", 150*time.Millisecond) {
+		t.Fatal("expected case-insensitive match to return true")
+	}
+}
+
+// TestHyprlandTracker_CloseReleasesResources verifies that Close stops the
+// background goroutine and subsequent IsFocused calls return ErrClosed (FOC-09
+// for the Hyprland backend).
+func TestHyprlandTracker_CloseReleasesResources(t *testing.T) {
+	titleCh := make(chan string)
+	ctx, cancel := context.WithCancel(context.Background())
+	tracker := newHyprlandTracker(ctx, cancel, titleCh)
+
+	if err := tracker.Close(); err != nil {
+		t.Fatalf("Close() returned error: %v", err)
+	}
+
+	_, err := tracker.IsFocused("anything")
+	if err == nil {
+		t.Fatal("expected error after Close, got nil")
+	}
+	if !errors.Is(err, ErrClosed) {
+		t.Fatalf("expected ErrClosed, got %v", err)
+	}
+}
+
+// TestParseHyprlandEvent verifies correct parsing of Hyprland socket event lines.
+func TestParseHyprlandEvent(t *testing.T) {
+	tests := []struct {
+		line  string
+		title string
+	}{
+		{"activewindow>>steam,Hearts of Iron IV", "Hearts of Iron IV"},
+		{"activewindow>>firefox,Mozilla Firefox", "Mozilla Firefox"},
+		{"activewindow>>,Hearts of Iron IV", "Hearts of Iron IV"},
+		{"activewindow>>steam", ""},
+		{"somethingelse>>steam,title", ""},
+		{"", ""},
+		{"activewindow>>class,Title with, commas", "Title with, commas"},
+	}
+	for _, tt := range tests {
+		got := parseHyprlandEvent(tt.line)
+		if got != tt.title {
+			t.Errorf("parseHyprlandEvent(%q) = %q, want %q", tt.line, got, tt.title)
+		}
+	}
+}

@@ -214,3 +214,10 @@ type AppConfig struct {
 **Given** `WAYLAND_DISPLAY` is set and `XDG_CURRENT_DESKTOP` contains `KDE`  
 **When** `New()` is called  
 **Then** a `KWinTracker` is returned
+
+### FOC-11 — Hyprland backend is selected when HYPRLAND_INSTANCE_SIGNATURE is set
+**Given** `WAYLAND_DISPLAY` is set and `HYPRLAND_INSTANCE_SIGNATURE` is set  
+**When** `New()` is called  
+**Then** a `HyprlandTracker` is returned  
+**And** the tracker subscribes to the Hyprland event socket at `$XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE/.socket2.sock` if available, otherwise falls back to polling `hyprctl activewindow -j` every 100 ms  
+**And** `activewindow>>class,title` lines emitted by the socket are parsed so that `title` (the substring after the first comma) becomes the tracked window title
