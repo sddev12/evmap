@@ -1,0 +1,38 @@
+version: 2
+
+builds:
+  - env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+      - arm
+    goarm:
+      - "7"
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.ShortCommit}}
+      - -X main.date={{.Date}}
+
+archives:
+  - format: tar.gz
+    files:
+      - README.md
+      - LICENSE
+    name_template: "evmap_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}"
+
+checksum:
+  name_template: "evmap_{{ .Version }}_checksums.txt"
+  algorithm: sha256
+
+release:
+  github:
+    owner: sddev12
+    name: evmap
+  draft: false
+  prerelease: auto
