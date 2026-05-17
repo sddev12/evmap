@@ -16,7 +16,7 @@ var (
 	ErrNoDisplay = errors.New("no display server detected")
 
 	// ErrUnimplemented is returned by New for Wayland compositors whose tracker
-	// has not yet been implemented (Sway, Hyprland, KWin).
+	// has not yet been implemented (Hyprland, KWin).
 	ErrUnimplemented = errors.New("tracker not yet implemented for this compositor")
 
 	// ErrClosed is returned by IsFocused after Close has been called.
@@ -41,7 +41,7 @@ var startSpy = startX11Spy
 
 // New returns a Tracker appropriate for the current desktop environment.
 // It detects the compositor by inspecting environment variables in this order:
-//  1. WAYLAND_DISPLAY + SWAYSOCK           → ErrUnimplemented (sway stub)
+//  1. WAYLAND_DISPLAY + SWAYSOCK           → SwayTracker
 //  2. WAYLAND_DISPLAY + HYPRLAND_…         → ErrUnimplemented (hyprland stub)
 //  3. WAYLAND_DISPLAY + KDE in XDG_…       → ErrUnimplemented (kwin stub)
 //  4. DISPLAY set                          → X11Tracker
@@ -53,7 +53,13 @@ var startSpy = startX11Spy
 func New() (Tracker, error) {
 	if os.Getenv("WAYLAND_DISPLAY") != "" {
 		if os.Getenv("SWAYSOCK") != "" {
-			return nil, fmt.Errorf("sway: %w", ErrUnimplemented)
+			ctx, cancel := context.WithCancel(context.Background())
+			ch, err := startSwaySubscribe(ctx)
+			if err != nil {
+				cancel()
+				return nil, fmt.Errorf("sway tracker: %w", err)
+			}
+			return newSwayTracker(ctx, cancel, ch), nil
 		}
 		if os.Getenv("HYPRLAND_INSTANCE_SIGNATURE") != "" {
 			return nil, fmt.Errorf("hyprland: %w", ErrUnimplemented)
