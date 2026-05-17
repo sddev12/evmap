@@ -53,8 +53,8 @@ func TestINP01_DiscoverReturnsOnlyKeyboardDevices(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Discover() error = %v", err)
 	}
-	if !slices.Equal(devices, []string{keyboardPath}) {
-		t.Fatalf("Discover() = %v, want [%s]", devices, keyboardPath)
+	if len(devices) != 1 || devices[0].Path != keyboardPath {
+		t.Fatalf("Discover() = %v, want [{Path: %s}]", devices, keyboardPath)
 	}
 	if !slices.Equal(closed, []int{pathToFD[keyboardPath], pathToFD[mousePath]}) {
 		t.Fatalf("close sequence = %v", closed)
@@ -343,6 +343,13 @@ func mockInputDeps(t *testing.T) func() {
 	origClose := closeDevice
 	origIoctlSetInt := ioctlSetInt
 	origIoctlGetBits := ioctlGetBits
+	origSyscallIoctl := syscallIoctl
+
+	// Default mock for syscallIoctl that returns success (no keys pressed)
+	// Tests can override this if they need specific behavior
+	syscallIoctl = func(trap, a1, a2, a3 uintptr) (r1, r2 uintptr, err unix.Errno) {
+		return 0, 0, 0
+	}
 
 	return func() {
 		globEventDevices = origGlob
@@ -350,6 +357,7 @@ func mockInputDeps(t *testing.T) func() {
 		closeDevice = origClose
 		ioctlSetInt = origIoctlSetInt
 		ioctlGetBits = origIoctlGetBits
+		syscallIoctl = origSyscallIoctl
 	}
 }
 

@@ -49,6 +49,7 @@ var (
 	closeDevice      = unix.Close
 	ioctlSetInt      = unix.IoctlSetInt
 	ioctlGetBits     = ioctlGetEventBits
+	syscallIoctl     = unix.Syscall
 )
 
 // Event type constants from linux/input.h.
@@ -265,7 +266,7 @@ func ioctlGetEventBits(fd int, evType uint16, bits []byte) error {
 		return nil
 	}
 	req := ioctlRead('E', uintptr(eviocgbitBase+evType), uintptr(len(bits)))
-	_, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), req, uintptr(unsafe.Pointer(&bits[0])))
+	_, _, errno := syscallIoctl(unix.SYS_IOCTL, uintptr(fd), req, uintptr(unsafe.Pointer(&bits[0])))
 	if errno != 0 {
 		return errno
 	}
@@ -281,7 +282,7 @@ func ioctlRead(typ byte, nr, size uintptr) uintptr {
 func getDeviceName(fd int) (string, error) {
 	buf := make([]byte, 256) // EVIOCGNAME buffer (typical max is ~80 chars)
 	req := ioctlRead('E', eviocgnameBase, uintptr(len(buf)))
-	_, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), req, uintptr(unsafe.Pointer(&buf[0])))
+	_, _, errno := syscallIoctl(unix.SYS_IOCTL, uintptr(fd), req, uintptr(unsafe.Pointer(&buf[0])))
 	if errno != 0 {
 		return "", errno
 	}
@@ -303,7 +304,7 @@ func queryKeyState(fd int) ([]byte, error) {
 	state := make([]byte, stateLen)
 
 	req := ioctlRead('E', eviocgkeyBase, uintptr(stateLen))
-	_, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), req, uintptr(unsafe.Pointer(&state[0])))
+	_, _, errno := syscallIoctl(unix.SYS_IOCTL, uintptr(fd), req, uintptr(unsafe.Pointer(&state[0])))
 	if errno != 0 {
 		return nil, fmt.Errorf("EVIOCGKEY ioctl: %w", errno)
 	}
