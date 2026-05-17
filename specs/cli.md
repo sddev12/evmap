@@ -39,6 +39,12 @@ Starts the key remapper. Blocks until the user presses Ctrl-C or sends `SIGTERM`
    b. Otherwise: run Discover(); if multiple devices found, prompt the user to choose
       or select the first one with a warning log.
    c. If no device found: exit with code 1 and a helpful message.
+   d. When opening the device, the process will wait (polling every 10ms) until all keys
+      are released before taking the exclusive grab. This prevents orphaned key releases
+      (e.g., from typing the shell command) from causing X11/Wayland auto-repeat issues.
+      At DEBUG log level, messages like "waiting for keys to be released" will appear
+      during this phase. After keys are released, a 100ms delay is added to allow the
+      release events to propagate to the compositor before grabbing.
 9. Open output device (uinput); exit with code 1 on failure with a helpful message.
 10. Initialise focus tracker if focus.window_title is set in config.
 11. Construct Remapper.
@@ -84,10 +90,10 @@ Example config:
 
 ## Multiple Devices Found: Behaviour
 
-If `Discover()` returns more than one keyboard path and `--device` is not set:
+If `Discover()` returns more than one keyboard device and `--device` is not set:
 
-- If running with a TTY (interactive): print a numbered list and prompt the user to choose.
-- If not a TTY (piped / scripted): select the first device, log a `WARN` message listing all found devices and stating which was chosen.
+- If running with a TTY (interactive): print a numbered list showing each device's human-readable name and path, then prompt the user to choose (e.g., `1: AT Translated Set 2 keyboard (/dev/input/event0)`).
+- If not a TTY (piped / scripted): select the first device, log a `WARN` message listing all found device paths and stating which was chosen.
 
 ---
 
@@ -143,3 +149,14 @@ On `SIGHUP`:
 **Given** the flag `--device /dev/input/event4` is passed  
 **When** `evmap` starts  
 **Then** `/dev/input/event4` is opened directly without running `Discover()`
+
+### CLI-09 — Startup waits for keys to be released
+**Given** a key is pressed when `evmap` is started  
+**When** `evmap` opens the input device  
+**Then** the device open operation blocks until the key is released, logging "waiting for keys to be released" at DEBUG level
+
+### CLI-10 — Device name is shown in selection prompt
+**Given** multiple keyboard devices are discovered  
+**And** no `--device` flag is provided  
+**When** the interactive device selection prompt appears  
+**Then** each device is listed with format: `N: Device Name (/dev/input/eventX)`
