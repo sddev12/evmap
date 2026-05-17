@@ -248,7 +248,7 @@ func discoverInputDevice(deviceFlagValue string) (string, error) {
 
 	// If exactly one device, use it
 	if len(devices) == 1 {
-		return devices[0], nil
+		return devices[0].Path, nil
 	}
 
 	// Multiple devices found: prompt if TTY, otherwise pick first with warning
@@ -256,7 +256,7 @@ func discoverInputDevice(deviceFlagValue string) (string, error) {
 }
 
 // selectInputDevice handles multiple device selection.
-func selectInputDevice(deviceFlagValue string, devices []string) (string, error) {
+func selectInputDevice(deviceFlagValue string, devices []input.DeviceInfo) (string, error) {
 	// If --device flag is set, always return it (bypasses discovery)
 	if deviceFlagValue != "" {
 		return deviceFlagValue, nil
@@ -267,7 +267,7 @@ func selectInputDevice(deviceFlagValue string, devices []string) (string, error)
 		// Interactive: prompt user to choose
 		fmt.Fprintf(os.Stderr, "Multiple keyboard devices found:\n")
 		for i, dev := range devices {
-			fmt.Fprintf(os.Stderr, "  %d: %s\n", i+1, dev)
+			fmt.Fprintf(os.Stderr, "  %d: %s (%s)\n", i+1, dev.Name, dev.Path)
 		}
 		fmt.Fprintf(os.Stderr, "Select device [1-%d]: ", len(devices))
 
@@ -277,14 +277,18 @@ func selectInputDevice(deviceFlagValue string, devices []string) (string, error)
 			if err != nil || choice < 1 || choice > len(devices) {
 				return "", fmt.Errorf("invalid selection")
 			}
-			return devices[choice-1], nil
+			return devices[choice-1].Path, nil
 		}
 		return "", fmt.Errorf("failed to read selection")
 	}
 
 	// Non-interactive: select first device and log warning
-	slog.Warn("multiple devices found; selecting first", "devices", devices, "selected", devices[0])
-	return devices[0], nil
+	devicePaths := make([]string, len(devices))
+	for i, dev := range devices {
+		devicePaths[i] = dev.Path
+	}
+	slog.Warn("multiple devices found; selecting first", "devices", devicePaths, "selected", devices[0].Path)
+	return devices[0].Path, nil
 }
 
 // isatty checks if the given file descriptor is connected to a terminal.

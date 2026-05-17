@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
@@ -15,6 +16,15 @@ import (
 
 // EVIOCGRAB grabs/releases exclusive access to a device. _IOW('E', 0x90, int).
 const EVIOCGRAB = 0x40044590
+
+// EVIOCGNAME gets the device name string. _IOR('E', 0x06, char[size]).
+const eviocgnameBase = 0x06
+
+// EVIOCGKEY gets the current key state bitmap. _IOR('E', 0x18, char[size]).
+const eviocgkeyBase = 0x18
+
+// KEY_MAX is the maximum key code (from linux/input-event-codes.h).
+const keyMax = 0x2FF
 
 const keyCodeA uint16 = 30
 
@@ -58,6 +68,12 @@ type InputEvent struct {
 	Value    int32
 }
 
+// DeviceInfo holds information about a discovered input device.
+type DeviceInfo struct {
+	Path string // /dev/input/eventN
+	Name string // Human-readable device name from EVIOCGNAME
+}
+
 // Device represents an exclusively-grabbed evdev keyboard input device.
 type Device struct {
 	fd   int
@@ -65,14 +81,14 @@ type Device struct {
 	path string
 }
 
-// Discover returns /dev/input/event* paths that report KEY_A support.
-func Discover() ([]string, error) {
+// Discover returns /dev/input/event* devices that report KEY_A support, with their human-readable names.
+func Discover() ([]DeviceInfo, error) {
 	paths, err := globEventDevices("/dev/input/event*")
 	if err != nil {
 		return nil, fmt.Errorf("discover devices: %w", err)
 	}
 
-	keyboards := make([]string, 0, len(paths))
+	keyboards := make([]DeviceInfo, 0, len(paths))
 	for _, path := range paths {
 		fd, err := openDevice(path, unix.O_RDONLY|unix.O_NONBLOCK, 0)
 		if err != nil {
@@ -80,11 +96,23 @@ func Discover() ([]string, error) {
 		}
 
 		ok, err := hasKeyCapability(fd, keyCodeA)
-		closeDevice(fd) //nolint:errcheck // probing only; individual close failures should not abort discovery
 		if err != nil || !ok {
+			closeDevice(fd) //nolint:errcheck
 			continue
 		}
-		keyboards = append(keyboards, path)
+
+		// Get device name
+		name, err := getDeviceName(fd)
+		closeDevice(fd) //nolint:errcheck // probing only; individual close failures should not abort discovery
+		if err != nil {
+			// If we can't get the name, use the path as fallback
+			name = path
+		}
+
+		keyboards = append(keyboards, DeviceInfo{
+			Path: path,
+			Name: name,
+		})
 	}
 
 	return keyboards, nil
@@ -106,6 +134,14 @@ func Open(path string) (*Device, error) {
 		return nil, fmt.Errorf("open %s: %w", path, err)
 	}
 
+	// Wait for all keys to be released before grabbing the device.
+	// This prevents orphaned key releases (e.g., Enter from executing the shell
+	// command) from being captured and causing X11/Wayland auto-repeat issues.
+	if err := waitForNeutralKeyState(fd); err != nil {
+		closeDevice(fd)
+		return nil, fmt.Errorf("waiting for neutral key state on %s: %w", path, err)
+	}
+
 	// unix.IoctlSetInt issues an ioctl(2) syscall on fd, passing the integer 1
 	// as the argument. EVIOCGRAB is a Linux evdev ioctl: value 1 means "grab"
 	// (take exclusive ownership), so no other process — including the X server
@@ -115,14 +151,22 @@ func Open(path string) (*Device, error) {
 		return nil, fmt.Errorf("grab %s: %w", path, err)
 	}
 
-	return &Device{
+	// Drain any stale events from the kernel buffer that were queued before
+	// the grab. These can include unpaired key releases that confuse the
+	// virtual keyboard's key state and cause phantom key repeats.
+	// Must drain BEFORE wrapping fd in os.File to avoid buffering issues.
+	drainBuffer(fd)
+
+	dev := &Device{
 		fd: fd,
 		// os.NewFile wraps the raw file descriptor in an *os.File so that
 		// encoding/binary.Read can use it as an io.Reader without us having
 		// to implement the read loop manually with unix.Read.
 		file: os.NewFile(uintptr(fd), path),
 		path: path,
-	}, nil
+	}
+
+	return dev, nil
 }
 
 // Close releases the exclusive grab and closes the underlying file descriptor.
@@ -231,4 +275,113 @@ func ioctlGetEventBits(fd int, evType uint16, bits []byte) error {
 func ioctlRead(typ byte, nr, size uintptr) uintptr {
 	// Implements Linux _IOR(type, nr, size) ioctl encoding from <asm-generic/ioctl.h>.
 	return (iocRead << iocDirshift) | (size << iocSizeshift) | (uintptr(typ) << iocTypeshift) | (nr << iocNrshift)
+}
+
+// getDeviceName retrieves the human-readable device name from an evdev file descriptor.
+func getDeviceName(fd int) (string, error) {
+	buf := make([]byte, 256) // EVIOCGNAME buffer (typical max is ~80 chars)
+	req := ioctlRead('E', eviocgnameBase, uintptr(len(buf)))
+	_, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), req, uintptr(unsafe.Pointer(&buf[0])))
+	if errno != 0 {
+		return "", errno
+	}
+	// Trim null terminator and any trailing nulls
+	for i, b := range buf {
+		if b == 0 {
+			return string(buf[:i]), nil
+		}
+	}
+	return string(buf), nil
+}
+
+// queryKeyState retrieves the current pressed key state bitmap from the kernel.
+// Returns a bitmask where bit N indicates whether key N is currently pressed.
+func queryKeyState(fd int) ([]byte, error) {
+	// Allocate enough bytes to hold key states for all key codes up to KEY_MAX.
+	// Each byte holds 8 key states (one bit per key).
+	stateLen := (keyMax / 8) + 1
+	state := make([]byte, stateLen)
+
+	req := ioctlRead('E', eviocgkeyBase, uintptr(stateLen))
+	_, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), req, uintptr(unsafe.Pointer(&state[0])))
+	if errno != 0 {
+		return nil, fmt.Errorf("EVIOCGKEY ioctl: %w", errno)
+	}
+
+	return state, nil
+}
+
+// countPressedKeys counts how many keys are currently pressed according to the state bitmap.
+func countPressedKeys(state []byte) int {
+	count := 0
+	for i := 0; i < keyMax; i++ {
+		if state[i/8]&(1<<(i%8)) != 0 {
+			count++
+		}
+	}
+	return count
+}
+
+// waitForNeutralKeyState waits until all keys are released before returning.
+// This prevents orphaned key releases from confusing X11/Wayland auto-repeat.
+// Based on keyd's device_grab implementation.
+func waitForNeutralKeyState(fd int) error {
+	pendingRelease := false
+
+	for {
+		state, err := queryKeyState(fd)
+		if err != nil {
+			return err
+		}
+
+		numPressed := countPressedKeys(state)
+		if numPressed == 0 {
+			break
+		}
+
+		slog.Debug("waiting for keys to be released", "count", numPressed)
+		pendingRelease = true
+		// Small delay to allow key up events to propagate through the kernel
+		time.Sleep(10000 * time.Microsecond) // 10ms
+	}
+
+	if pendingRelease {
+		// Allow the key up events to fully propagate to X11/Wayland before grabbing.
+		// This gives the compositor time to see the release events and stop auto-repeat.
+		slog.Debug("keys released, allowing propagation delay")
+		time.Sleep(100000 * time.Microsecond) // 100ms (same as keyd)
+	}
+
+	return nil
+}
+
+// drainBuffer reads and discards all pending events from the device.
+// This clears stale events (like unpaired key releases) that were queued
+// before the exclusive grab, preventing them from confusing the virtual
+// keyboard's key state. Uses a direct syscall to avoid blocking.
+func drainBuffer(fd int) {
+	var ev InputEvent
+	count := 0
+	buf := make([]byte, binary.Size(ev))
+
+	for {
+		// Use unix.Read directly to get proper errno handling for O_NONBLOCK
+		n, err := unix.Read(fd, buf)
+		if err != nil {
+			// EAGAIN/EWOULDBLOCK means buffer is empty, which is what we want
+			if err == unix.EAGAIN || err == unix.EWOULDBLOCK {
+				break
+			}
+			// Any other error, stop draining
+			break
+		}
+		if n == 0 {
+			// EOF or no data
+			break
+		}
+		count++
+	}
+	if count > 0 {
+		slog.Debug("drained stale events from input buffer", "count", count)
+	}
 }
