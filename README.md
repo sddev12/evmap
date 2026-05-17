@@ -44,7 +44,45 @@ Many games—especially older titles or those from studios like Paradox Interact
 
 ## 📦 Installation
 
-### 1. Clone and Build
+### Automated Installation (Recommended)
+
+The easiest way to install evmap is using the automated installation script:
+
+```bash
+git clone https://github.com/sddev12/evmap.git
+cd evmap
+./install.sh
+```
+
+The script will:
+- ✅ Build the binary from source
+- ✅ Install to `/usr/local/bin/`
+- ✅ Set up user permissions (input/uinput groups)
+- ✅ Configure udev rules
+- ✅ Load the uinput kernel module
+- ✅ Optionally configure boot loading
+- ✅ Verify the installation
+
+**Options:**
+```bash
+./install.sh -y              # Non-interactive (accept all defaults)
+./install.sh --config        # Generate sample config file
+./install.sh --no-boot-load  # Skip boot loading setup
+./install.sh --help          # Show all options
+```
+
+**After installation:** Log out and log back in for group membership to take effect.
+
+---
+
+### Manual Installation
+
+If you prefer manual installation or the script doesn't work for your system:
+
+<details>
+<summary>Click to expand manual installation steps</summary>
+
+#### 1. Clone and Build
 
 ```bash
 git clone https://github.com/sddev12/evmap.git
@@ -53,7 +91,7 @@ go build -o evmap .
 sudo mv evmap /usr/local/bin/
 ```
 
-### 2. Set Up Permissions
+#### 2. Set Up Permissions
 
 To avoid needing root:
 
@@ -81,7 +119,7 @@ echo 'uinput' | sudo tee /etc/modules-load.d/uinput.conf
 
 **Log out and log back in** for group membership to take effect.
 
-### 3. Verify Permissions
+#### 3. Verify Permissions
 
 ```bash
 # Check group membership
@@ -90,6 +128,32 @@ groups | grep -E 'input|uinput'
 # Check /dev/uinput permissions
 ls -l /dev/uinput
 # Should show: crw-rw---- 1 root uinput ...
+```
+
+</details>
+
+---
+
+## 🗑️ Uninstallation
+
+To remove evmap and clean up system configuration:
+
+```bash
+./uninstall.sh
+```
+
+The script will:
+- ✅ Remove the binary from `/usr/local/bin/`
+- ✅ Clean up udev rules and boot configuration
+- ✅ Optionally remove user from input/uinput groups
+- ✅ Optionally remove config file
+
+**Options:**
+```bash
+./uninstall.sh -y              # Non-interactive (remove everything)
+./uninstall.sh --keep-groups   # Keep group memberships
+./uninstall.sh --keep-config   # Keep ~/.evmap.yaml
+./uninstall.sh --help          # Show all options
 ```
 
 ---
