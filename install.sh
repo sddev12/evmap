@@ -32,6 +32,11 @@ FLAG_YES=0
 FLAG_NO_BOOT_LOAD=0
 FLAG_CONFIG=0
 FLAG_VERBOSE=0
+FLAG_BUILD_FROM_SOURCE=0
+
+# GitHub repository
+GITHUB_REPO="sddev12/evmap"
+GITHUB_API="https://api.github.com/repos/$GITHUB_REPO"
 
 # Helper functions
 print_header() {
@@ -84,6 +89,96 @@ ask_yes_no() {
     esac
 }
 
+# Detect system architecture
+detect_arch() {
+    local arch=$(uname -m)
+    case "$arch" in
+        x86_64|amd64) echo "amd64" ;;
+        aarch64|arm64) echo "arm64" ;;
+        armv7l|armv7) echo "armv7" ;;
+        *)
+            print_error "Unsupported architecture: $arch"
+            exit $EXIT_PREREQ
+            ;;
+    esac
+}
+
+# Download latest release from GitHub
+download_release() {
+    local arch=$(detect_arch)
+    local os="linux"
+    
+    print_info "Detecting latest release..."
+    
+    # Get latest release info
+    local latest_url="$GITHUB_API/releases/latest"
+    local release_data
+    
+    if command -v curl &> /dev/null; then
+        release_data=$(curl -sL "$latest_url")
+    elif command -v wget &> /dev/null; then
+        release_data=$(wget -qO- "$latest_url")
+    else
+        print_error "Neither curl nor wget found (required for downloading)"
+        return 1
+    fi
+    
+    # Extract version tag
+    local version=$(echo "$release_data" | grep -o '"tag_name": *"[^"]*"' | head -1 | sed 's/"tag_name": *"\(.*\)"/\1/')
+    
+    if [ -z "$version" ]; then
+        print_warning "Could not detect latest release version"
+        return 1
+    fi
+    
+    print_info "Latest release: $version"
+    
+    # Construct download URL
+    local tarball_name="evmap_${version#v}_${os}_${arch}.tar.gz"
+    local download_url="https://github.com/$GITHUB_REPO/releases/download/$version/$tarball_name"
+    
+    print_info "Downloading $tarball_name..."
+    
+    # Download tarball
+    local temp_dir=$(mktemp -d)
+    local tarball_path="$temp_dir/$tarball_name"
+    
+    if command -v curl &> /dev/null; then
+        if ! curl -sL -o "$tarball_path" "$download_url"; then
+            rm -rf "$temp_dir"
+            print_warning "Download failed"
+            return 1
+        fi
+    else
+        if ! wget -q -O "$tarball_path" "$download_url"; then
+            rm -rf "$temp_dir"
+            print_warning "Download failed"
+            return 1
+        fi
+    fi
+    
+    # Extract binary
+    print_info "Extracting binary..."
+    if ! tar -xzf "$tarball_path" -C "$temp_dir"; then
+        rm -rf "$temp_dir"
+        print_error "Failed to extract tarball"
+        return 1
+    fi
+    
+    # Move binary to current directory
+    if [ -f "$temp_dir/evmap" ]; then
+        mv "$temp_dir/evmap" ./evmap
+        chmod +x ./evmap
+        rm -rf "$temp_dir"
+        print_success "Downloaded evmap $version"
+        return 0
+    else
+        rm -rf "$temp_dir"
+        print_error "Binary not found in release tarball"
+        return 1
+    fi
+}
+
 # Parse command-line arguments
 show_help() {
     cat << EOF
@@ -94,15 +189,16 @@ Install evmap with automated system configuration.
 OPTIONS:
     -h, --help          Show this help message
     -y, --yes           Skip all prompts (accept defaults)
+    --build-from-source Build from source instead of downloading binary
     --no-boot-load      Skip configuring uinput boot loading
     --config            Generate sample config file at ~/.evmap.yaml
     -v, --verbose       Show detailed output
 
 EXAMPLES:
-    $0                  Interactive installation
-    $0 -y               Non-interactive installation
-    $0 --config         Install and generate sample config
-    $0 --no-boot-load   Install without boot loading setup
+    $0                     Download and install latest release
+    $0 --build-from-source Build from source (requires Go 1.26+)
+    $0 -y                  Non-interactive installation
+    $0 --config            Install and generate sample config
 
 EOF
     exit 0
@@ -112,6 +208,7 @@ while [[ $# -gt 0 ]]; do
     case $1 in
         -h|--help) show_help ;;
         -y|--yes) FLAG_YES=1 ;;
+        --build-from-source) FLAG_BUILD_FROM_SOURCE=1 ;;
         --no-boot-load) FLAG_NO_BOOT_LOAD=1 ;;
         --config) FLAG_CONFIG=1 ;;
         -v|--verbose) FLAG_VERBOSE=1; set -x ;;
@@ -134,25 +231,36 @@ if [ "$(uname -s)" != "Linux" ]; then
 fi
 print_success "Linux OS detected"
 
-# Check Go installation
-if ! command -v go &> /dev/null; then
-    print_error "Go is not installed"
-    echo ""
-    echo "Please install Go 1.26 or later from https://go.dev/dl/"
-    exit $EXIT_PREREQ
-fi
+# Check Go installation (only if building from source)
+if [ "$FLAG_BUILD_FROM_SOURCE" -eq 1 ]; then
+    if ! command -v go &> /dev/null; then
+        print_error "Go is not installed (required for --build-from-source)"
+        echo ""
+        echo "Please install Go 1.26 or later from https://go.dev/dl/"
+        exit $EXIT_PREREQ
+    fi
 
-GO_VERSION=$(go version | awk '{print $3}' | sed 's/go//')
-GO_MAJOR=$(echo "$GO_VERSION" | cut -d. -f1)
-GO_MINOR=$(echo "$GO_VERSION" | cut -d. -f2)
+    GO_VERSION=$(go version | awk '{print $3}' | sed 's/go//')
+    GO_MAJOR=$(echo "$GO_VERSION" | cut -d. -f1)
+    GO_MINOR=$(echo "$GO_VERSION" | cut -d. -f2)
 
-if [ "$GO_MAJOR" -lt 1 ] || ([ "$GO_MAJOR" -eq 1 ] && [ "$GO_MINOR" -lt 26 ]); then
-    print_error "Go version $GO_VERSION is too old (require 1.26+)"
-    echo ""
-    echo "Please upgrade Go from https://go.dev/dl/"
-    exit $EXIT_PREREQ
+    if [ "$GO_MAJOR" -lt 1 ] || ([ "$GO_MAJOR" -eq 1 ] && [ "$GO_MINOR" -lt 26 ]); then
+        print_error "Go version $GO_VERSION is too old (require 1.26+)"
+        echo ""
+        echo "Please upgrade Go from https://go.dev/dl/"
+        exit $EXIT_PREREQ
+    fi
+    print_success "Go $GO_VERSION installed"
+else
+    # Check for curl or wget (required for downloading)
+    if ! command -v curl &> /dev/null && ! command -v wget &> /dev/null; then
+        print_error "Neither curl nor wget found (required for downloading releases)"
+        echo ""
+        echo "Install curl or wget, or use --build-from-source to build locally"
+        exit $EXIT_PREREQ
+    fi
+    print_success "Download tools available"
 fi
-print_success "Go $GO_VERSION installed"
 
 # Check if already installed
 if [ -f "/usr/local/bin/evmap" ]; then
@@ -167,31 +275,68 @@ fi
 
 # Phase 2: Build
 echo ""
-print_info "Building evmap..."
+print_info "Obtaining evmap binary..."
 
 # Check if binary already exists
 if [ -f "./evmap" ]; then
     print_warning "Binary already exists in current directory"
-    if ask_yes_no "Rebuild?" "y"; then
+    if ask_yes_no "Re-download/rebuild?" "y"; then
         rm -f ./evmap
     fi
 fi
 
-# Build binary
+# Get binary
 if [ ! -f "./evmap" ]; then
-    if ! go build -o evmap .; then
-        print_error "Build failed"
-        exit $EXIT_BUILD
+    if [ "$FLAG_BUILD_FROM_SOURCE" -eq 1 ]; then
+        # Force build from source
+        print_info "Building from source (--build-from-source)..."
+        if ! go build -o evmap .; then
+            print_error "Build failed"
+            exit $EXIT_BUILD
+        fi
+        print_success "Build successful"
+    else
+        # Try download first
+        print_info "Attempting to download pre-built binary..."
+        if download_release; then
+            # Download successful
+            :
+        else
+            # Download failed, try building from source if Go is available
+            print_warning "Download failed, attempting to build from source..."
+            
+            if ! command -v go &> /dev/null; then
+                print_error "Go is not installed (required to build from source)"
+                echo ""
+                echo "Please install Go 1.26+ from https://go.dev/dl/"
+                echo "Or ensure you have curl/wget to download pre-built binaries"
+                exit $EXIT_PREREQ
+            fi
+            
+            GO_VERSION=$(go version | awk '{print $3}' | sed 's/go//')
+            GO_MAJOR=$(echo "$GO_VERSION" | cut -d. -f1)
+            GO_MINOR=$(echo "$GO_VERSION" | cut -d. -f2)
+            
+            if [ "$GO_MAJOR" -lt 1 ] || ([ "$GO_MAJOR" -eq 1 ] && [ "$GO_MINOR" -lt 26 ]); then
+                print_error "Go version $GO_VERSION is too old (require 1.26+)"
+                exit $EXIT_PREREQ
+            fi
+            
+            print_info "Building from source..."
+            if ! go build -o evmap .; then
+                print_error "Build failed"
+                exit $EXIT_BUILD
+            fi
+            print_success "Build successful"
+        fi
     fi
 fi
 
 # Verify binary exists
 if [ ! -f "./evmap" ]; then
-    print_error "Binary not found after build"
+    print_error "Binary not found after build/download"
     exit $EXIT_BUILD
 fi
-
-print_success "Build successful"
 
 # Phase 3: Installation
 echo ""
