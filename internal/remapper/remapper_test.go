@@ -73,14 +73,14 @@ type mockOutput struct {
 	closed   bool
 }
 
-func (m *mockOutput) WriteEvent(evType, code uint16, value int32) error {
+func (m *mockOutput) WriteEvent(timeSec, timeUsec int64, evType, code uint16, value int32) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.events = append(m.events, writeCall{evType, code, value})
 	return nil
 }
 
-func (m *mockOutput) WriteSyn() error {
+func (m *mockOutput) WriteSyn(timeSec, timeUsec int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.synCount++
@@ -480,12 +480,15 @@ func TestRMP09_FailedReloadLeavesKeymapUnchanged(t *testing.T) {
 	}
 }
 
-// TestRMP10_WriteSynCalledOnceAfterEveryKeyEvent codifies RMP-10.
-func TestRMP10_WriteSynCalledOnceAfterEveryKeyEvent(t *testing.T) {
+// TestRMP10_SynEventsForwardedFromInputStream codifies RMP-10.
+func TestRMP10_SynEventsForwardedFromInputStream(t *testing.T) {
 	in := newMockInput(
 		input.InputEvent{Type: input.EvKey, Code: keyUp, Value: 1},
+		input.InputEvent{Type: input.EvSyn, Code: 0, Value: 0},
 		input.InputEvent{Type: input.EvKey, Code: keyUp, Value: 0},
+		input.InputEvent{Type: input.EvSyn, Code: 0, Value: 0},
 		input.InputEvent{Type: input.EvKey, Code: keyUp, Value: 2},
+		input.InputEvent{Type: input.EvSyn, Code: 0, Value: 0},
 	)
 	out := &mockOutput{}
 	keymaps := []config.Keymap{{From: "up", To: "w"}}
@@ -505,7 +508,7 @@ func TestRMP10_WriteSynCalledOnceAfterEveryKeyEvent(t *testing.T) {
 	}
 	synCount := out.getSynCount()
 	if synCount != 3 {
-		t.Errorf("WriteSyn called %d times, want 3 (once per key event)", synCount)
+		t.Errorf("WriteSyn called %d times, want 3 (once per SYN event in input)", synCount)
 	}
 }
 

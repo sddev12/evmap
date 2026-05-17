@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -19,6 +18,7 @@ import (
 const (
 	uiSetEvBit   = 0x40045564 // UI_SET_EVBIT  — register an event type we will emit
 	uiSetKeyBit  = 0x40045565 // UI_SET_KEYBIT — register a key code we will emit
+	uiSetMscBit  = 0x40045568 // UI_SET_MSCBIT — register a misc event code we will emit
 	uiDevCreate  = 0x5501     // UI_DEV_CREATE  — instantiate the virtual device
 	uiDevDestroy = 0x5502     // UI_DEV_DESTROY — tear down the virtual device
 )
@@ -32,7 +32,9 @@ const keyMax = 0x2FF
 const (
 	evSyn     uint16 = 0x00 // EV_SYN — synchronisation / batch boundary
 	evKey     uint16 = 0x01 // EV_KEY — key press / release / repeat
+	evMsc     uint16 = 0x04 // EV_MSC — miscellaneous (scan codes)
 	synReport uint16 = 0x00 // SYN_REPORT sub-code: signals end of one event batch
+	mscScan   uint16 = 0x04 // MSC_SCAN — raw scan code from keyboard
 )
 
 // uinputUserDev mirrors the kernel's struct uinput_user_dev from linux/uinput.h.
@@ -89,12 +91,13 @@ func Open() (*Device, error) {
 	}
 
 	// UI_SET_EVBIT registers the event types this virtual device will produce.
-	// We need exactly two:
+	// We need three types:
 	//   evSyn (0) — every event batch must end with a SYN_REPORT; without this
 	//               the kernel will not deliver preceding events to consumers.
 	//   evKey (1) — carries key press/release/repeat events.
+	//   evMsc (4) — carries miscellaneous events like scan codes.
 	// unix.IoctlSetInt issues ioctl(fd, UI_SET_EVBIT, bitValue).
-	for _, evBit := range []int{int(evSyn), int(evKey)} {
+	for _, evBit := range []int{int(evSyn), int(evKey), int(evMsc)} {
 		if err := unix.IoctlSetInt(fd, uiSetEvBit, evBit); err != nil {
 			unix.Close(fd)
 			return nil, fmt.Errorf("UI_SET_EVBIT %d: %w", evBit, err)
@@ -109,6 +112,12 @@ func Open() (*Device, error) {
 			unix.Close(fd)
 			return nil, fmt.Errorf("UI_SET_KEYBIT %d: %w", code, err)
 		}
+	}
+
+	// UI_SET_MSCBIT registers the MSC_SCAN code so the device can emit scan codes.
+	if err := unix.IoctlSetInt(fd, uiSetMscBit, int(mscScan)); err != nil {
+		unix.Close(fd)
+		return nil, fmt.Errorf("UI_SET_MSCBIT %d: %w", mscScan, err)
 	}
 
 	// os.NewFile wraps the raw fd as an *os.File so binary.Write can use it
@@ -144,12 +153,12 @@ func Open() (*Device, error) {
 // evType is the event class (evKey for key events), code is the key code, and
 // value is 1 for press, 0 for release, or 2 for autorepeat.
 // After one or more WriteEvent calls you must call WriteSyn to flush the batch.
-func (d *Device) WriteEvent(evType, code uint16, value int32) error {
-	now := time.Now()
+func (d *Device) WriteEvent(timeSec, timeUsec int64, evType, code uint16, value int32) error {
 	ev := kernelEvent{
-		// Provide a real wallclock timestamp; some consumers use it for timing.
-		TimeSec:  now.Unix(),
-		TimeUsec: int64(now.Nanosecond() / 1000), // ns → µs
+		// Preserve the original timestamp from the physical device so events
+		// that belong together (e.g. MSC_SCAN + KEY_ENTER) share the same time.
+		TimeSec:  timeSec,
+		TimeUsec: timeUsec,
 		Type:     evType,
 		Code:     code,
 		Value:    value,
@@ -167,8 +176,8 @@ func (d *Device) WriteEvent(evType, code uint16, value int32) error {
 // This acts as a batch boundary: the kernel holds preceding key events until
 // it sees SYN_REPORT, then delivers them all at once to reading processes.
 // You must call WriteSyn after every key press or release.
-func (d *Device) WriteSyn() error {
-	return d.WriteEvent(evSyn, synReport, 0)
+func (d *Device) WriteSyn(timeSec, timeUsec int64) error {
+	return d.WriteEvent(timeSec, timeUsec, evSyn, synReport, 0)
 }
 
 // Close destroys the virtual device and releases the /dev/uinput fd.

@@ -203,8 +203,8 @@ func TestINP05_ReadEventsDeliversKeyPressAndRelease(t *testing.T) {
 	}
 }
 
-// TestINP06_ReadEventsDropsEvMscEvents codifies INP-06.
-func TestINP06_ReadEventsDropsEvMscEvents(t *testing.T) {
+// TestINP06_ReadEventsForwardsEvMscEvents codifies INP-06.
+func TestINP06_ReadEventsForwardsEvMscEvents(t *testing.T) {
 	d, writer := newSocketPairDevice(t)
 	defer d.file.Close()
 	defer writer.Close()
@@ -222,14 +222,14 @@ func TestINP06_ReadEventsDropsEvMscEvents(t *testing.T) {
 	writeEvent(t, writer, InputEvent{Type: EvMsc, Code: 4, Value: 1})
 	writeEvent(t, writer, InputEvent{Type: EvKey, Code: keyCodeA, Value: 1})
 
-	got := recvEvent(t, ch)
-	if got.Type != EvKey || got.Value != 1 {
-		t.Fatalf("event = %+v, want Type=%d Value=1", got, EvKey)
+	// Expect both events to be forwarded
+	gotMsc := recvEvent(t, ch)
+	if gotMsc.Type != EvMsc || gotMsc.Code != 4 || gotMsc.Value != 1 {
+		t.Fatalf("MSC event = %+v, want Type=%d Code=4 Value=1", gotMsc, EvMsc)
 	}
-	select {
-	case extra := <-ch:
-		t.Fatalf("unexpected extra event = %+v", extra)
-	case <-time.After(noEventTimeout):
+	gotKey := recvEvent(t, ch)
+	if gotKey.Type != EvKey || gotKey.Value != 1 {
+		t.Fatalf("key event = %+v, want Type=%d Value=1", gotKey, EvKey)
 	}
 
 	cancel()

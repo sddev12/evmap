@@ -52,10 +52,10 @@ func TestOUT02_WriteEventThenWriteSynDeliversKeyPress(t *testing.T) {
 		_ = dev.Close()
 	})
 
-	if err := dev.WriteEvent(evKey, unix.KEY_W, 1); err != nil {
+	if err := dev.WriteEvent(0, 0, evKey, unix.KEY_W, 1); err != nil {
 		t.Fatalf("write key press: %v", err)
 	}
-	if err := dev.WriteSyn(); err != nil {
+	if err := dev.WriteSyn(0, 0); err != nil {
 		t.Fatalf("write syn: %v", err)
 	}
 
@@ -73,16 +73,16 @@ func TestOUT03_PressAndReleaseDeliveredInOrder(t *testing.T) {
 		_ = dev.Close()
 	})
 
-	if err := dev.WriteEvent(evKey, unix.KEY_W, 1); err != nil {
+	if err := dev.WriteEvent(0, 0, evKey, unix.KEY_W, 1); err != nil {
 		t.Fatalf("write key press: %v", err)
 	}
-	if err := dev.WriteSyn(); err != nil {
+	if err := dev.WriteSyn(0, 0); err != nil {
 		t.Fatalf("write syn after press: %v", err)
 	}
-	if err := dev.WriteEvent(evKey, unix.KEY_W, 0); err != nil {
+	if err := dev.WriteEvent(0, 0, evKey, unix.KEY_W, 0); err != nil {
 		t.Fatalf("write key release: %v", err)
 	}
-	if err := dev.WriteSyn(); err != nil {
+	if err := dev.WriteSyn(0, 0); err != nil {
 		t.Fatalf("write syn after release: %v", err)
 	}
 
@@ -100,10 +100,10 @@ func TestOUT04_AutoRepeatForwarded(t *testing.T) {
 		_ = dev.Close()
 	})
 
-	if err := dev.WriteEvent(evKey, unix.KEY_W, 2); err != nil {
-		t.Fatalf("write key repeat: %v", err)
+	if err := dev.WriteEvent(0, 0, evKey, unix.KEY_W, 2); err != nil {
+		t.Fatalf("write autorepeat: %v", err)
 	}
-	if err := dev.WriteSyn(); err != nil {
+	if err := dev.WriteSyn(0, 0); err != nil {
 		t.Fatalf("write syn: %v", err)
 	}
 
