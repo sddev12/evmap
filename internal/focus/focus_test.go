@@ -172,38 +172,227 @@ func TestFOC10_KWinBackendSelectedOnKDEPlasmaWayland(t *testing.T) {
 	t.Setenv("XDG_CURRENT_DESKTOP", "KDE")
 	t.Setenv("SWAYSOCK", "")
 	t.Setenv("HYPRLAND_INSTANCE_SIGNATURE", "")
+	t.Setenv("DISPLAY", "")
 
-	_, err := New()
-	if err == nil {
-		t.Fatal("expected error, got nil")
+	origLookPath := lookPath
+	origPoller := startKWinPoller
+	t.Cleanup(func() {
+		lookPath = origLookPath
+		startKWinPoller = origPoller
+	})
+	lookPath = func(file string) (string, error) {
+		switch file {
+		case "qdbus6", "xdotool":
+			return "/usr/bin/" + file, nil
+		default:
+			return "", errors.New("not found")
+		}
 	}
-	if !errors.Is(err, ErrUnimplemented) {
-		t.Fatalf("expected ErrUnimplemented, got %v", err)
+	startKWinPoller = func(_ context.Context, _ string) (<-chan string, error) {
+		return make(chan string), nil
 	}
-	if !strings.Contains(err.Error(), "kwin") {
-		t.Fatalf("expected error to mention kwin, got %q", err.Error())
+
+	tracker, err := New()
+	if err != nil {
+		t.Fatalf("New() returned error: %v", err)
+	}
+	defer tracker.Close()
+
+	if _, ok := tracker.(*KWinTracker); !ok {
+		t.Fatalf("expected *KWinTracker, got %T", tracker)
 	}
 }
 
 // TestFOC10_KWinDetectionCaseInsensitive ensures XDG_CURRENT_DESKTOP matching
 // is case-insensitive (e.g. "kde" or "KDE Plasma" both match).
 func TestFOC10_KWinDetectionCaseInsensitive(t *testing.T) {
+	origLookPath := lookPath
+	origPoller := startKWinPoller
+	t.Cleanup(func() {
+		lookPath = origLookPath
+		startKWinPoller = origPoller
+	})
+	lookPath = func(file string) (string, error) {
+		switch file {
+		case "qdbus6", "xdotool":
+			return "/usr/bin/" + file, nil
+		default:
+			return "", errors.New("not found")
+		}
+	}
+	startKWinPoller = func(_ context.Context, _ string) (<-chan string, error) {
+		return make(chan string), nil
+	}
+
 	for _, desktop := range []string{"kde", "KDE Plasma", "KDE:KDE"} {
 		t.Run(desktop, func(t *testing.T) {
 			t.Setenv("WAYLAND_DISPLAY", "wayland-0")
 			t.Setenv("XDG_CURRENT_DESKTOP", desktop)
 			t.Setenv("SWAYSOCK", "")
 			t.Setenv("HYPRLAND_INSTANCE_SIGNATURE", "")
+			t.Setenv("DISPLAY", "")
 
-			_, err := New()
-			if !errors.Is(err, ErrUnimplemented) {
-				t.Fatalf("XDG_CURRENT_DESKTOP=%q: expected ErrUnimplemented, got %v", desktop, err)
+			tracker, err := New()
+			if err != nil {
+				t.Fatalf("XDG_CURRENT_DESKTOP=%q: New() error = %v", desktop, err)
+			}
+			defer tracker.Close()
+
+			if _, ok := tracker.(*KWinTracker); !ok {
+				t.Fatalf("XDG_CURRENT_DESKTOP=%q: expected *KWinTracker, got %T", desktop, tracker)
 			}
 		})
 	}
 }
 
-// waitForFocus polls IsFocused until it returns true or the deadline is exceeded.
+// TestFOC02_KWinIsFocusedReturnsTrueWhenFocused codifies FOC-02 for KWinTracker.
+func TestFOC02_KWinIsFocusedReturnsTrueWhenFocused(t *testing.T) {
+	titleCh := make(chan string, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	tracker := newKWinTracker(ctx, cancel, titleCh)
+	defer tracker.Close()
+
+	titleCh <- "Hearts of Iron IV"
+
+	if !waitForFocus(tracker, "Hearts of Iron IV", 150*time.Millisecond) {
+		t.Fatal("expected IsFocused to return true within 150 ms")
+	}
+}
+
+// TestFOC03_KWinIsFocusedReturnsFalseAfterFocusLost codifies FOC-03 for KWinTracker.
+func TestFOC03_KWinIsFocusedReturnsFalseAfterFocusLost(t *testing.T) {
+	titleCh := make(chan string, 2)
+	ctx, cancel := context.WithCancel(context.Background())
+	tracker := newKWinTracker(ctx, cancel, titleCh)
+	defer tracker.Close()
+
+	titleCh <- "Hearts of Iron IV"
+	if !waitForFocus(tracker, "Hearts of Iron IV", 150*time.Millisecond) {
+		t.Fatal("tracker did not pick up initial focus")
+	}
+
+	titleCh <- "Firefox"
+
+	deadline := time.Now().Add(150 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		focused, err := tracker.IsFocused("Hearts of Iron IV")
+		if err != nil {
+			t.Fatalf("IsFocused: %v", err)
+		}
+		if !focused {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("expected IsFocused to return false after focus moved to another window")
+}
+
+// TestFOC04_KWinFocusChangeDetectedWithin150ms codifies FOC-04 for KWinTracker.
+func TestFOC04_KWinFocusChangeDetectedWithin150ms(t *testing.T) {
+	titleCh := make(chan string, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	tracker := newKWinTracker(ctx, cancel, titleCh)
+	defer tracker.Close()
+
+	start := time.Now()
+	titleCh <- "Hearts of Iron IV"
+
+	if !waitForFocus(tracker, "Hearts of Iron IV", 150*time.Millisecond) {
+		t.Fatalf("focus change not detected within 150 ms (elapsed: %v)", time.Since(start))
+	}
+}
+
+// TestFOC09_KWinCloseReleasesResourcesAndSubsequentIsFocusedReturnsError codifies FOC-09 for KWinTracker.
+func TestFOC09_KWinCloseReleasesResourcesAndSubsequentIsFocusedReturnsError(t *testing.T) {
+	titleCh := make(chan string)
+	ctx, cancel := context.WithCancel(context.Background())
+	tracker := newKWinTracker(ctx, cancel, titleCh)
+
+	if err := tracker.Close(); err != nil {
+		t.Fatalf("Close() returned error: %v", err)
+	}
+
+	_, err := tracker.IsFocused("anything")
+	if err == nil {
+		t.Fatal("expected error after Close, got nil")
+	}
+	if !errors.Is(err, ErrClosed) {
+		t.Fatalf("expected ErrClosed, got %v", err)
+	}
+}
+
+// TestNewKWinTrackerReturnsHelpfulErrorWhenQDBusMissing ensures KDE Wayland
+// sessions surface an install hint when neither qdbus6 nor qdbus is available.
+func TestNewKWinTrackerReturnsHelpfulErrorWhenQDBusMissing(t *testing.T) {
+	t.Setenv("WAYLAND_DISPLAY", "wayland-0")
+	t.Setenv("XDG_CURRENT_DESKTOP", "KDE")
+	t.Setenv("SWAYSOCK", "")
+	t.Setenv("HYPRLAND_INSTANCE_SIGNATURE", "")
+	t.Setenv("DISPLAY", "")
+
+	origLookPath := lookPath
+	t.Cleanup(func() { lookPath = origLookPath })
+	lookPath = func(file string) (string, error) {
+		return "", errors.New("not found")
+	}
+
+	_, err := New()
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "qt6-tools-qdbus") {
+		t.Fatalf("expected qdbus install hint, got %q", err.Error())
+	}
+}
+
+// TestNewKWinTrackerReturnsHelpfulErrorWhenXdotoolMissing ensures KDE Wayland
+// sessions surface an xdotool install hint when qdbus is available but xdotool is not.
+func TestNewKWinTrackerReturnsHelpfulErrorWhenXdotoolMissing(t *testing.T) {
+	t.Setenv("WAYLAND_DISPLAY", "wayland-0")
+	t.Setenv("XDG_CURRENT_DESKTOP", "KDE")
+	t.Setenv("SWAYSOCK", "")
+	t.Setenv("HYPRLAND_INSTANCE_SIGNATURE", "")
+	t.Setenv("DISPLAY", "")
+
+	origLookPath := lookPath
+	t.Cleanup(func() { lookPath = origLookPath })
+	lookPath = func(file string) (string, error) {
+		if file == "qdbus6" {
+			return "/usr/bin/qdbus6", nil
+		}
+		return "", errors.New("not found")
+	}
+
+	_, err := New()
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "sudo apt install xdotool") {
+		t.Fatalf("expected xdotool install hint, got %q", err.Error())
+	}
+}
+
+func TestFOC10_KWinFallsBackToQdbusWhenQdbus6Missing(t *testing.T) {
+	origLookPath := lookPath
+	t.Cleanup(func() { lookPath = origLookPath })
+	lookPath = func(file string) (string, error) {
+		if file == "qdbus" {
+			return "/usr/bin/qdbus", nil
+		}
+		return "", errors.New("not found")
+	}
+
+	command, err := findQDBusCommand()
+	if err != nil {
+		t.Fatalf("findQDBusCommand() returned error: %v", err)
+	}
+	if command != "qdbus" {
+		t.Fatalf("expected qdbus fallback, got %q", command)
+	}
+}
+
+// waitForFocus polls Tracker.IsFocused until it returns true or the deadline is
+// exceeded. It is shared by the X11Tracker and KWinTracker focus-behaviour tests.
 func waitForFocus(tracker Tracker, title string, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
