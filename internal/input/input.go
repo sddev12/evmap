@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"unsafe"
@@ -143,6 +144,7 @@ func (d *Device) ReadEvents(ctx context.Context, ch chan<- InputEvent) {
 	// while still being able to wake up periodically to check ctx.
 	epfd, err := unix.EpollCreate1(0)
 	if err != nil {
+		slog.Error("epoll_create1 failed", "err", err)
 		return
 	}
 	// Close the epoll fd when ReadEvents returns so we don't leak it.
@@ -158,6 +160,7 @@ func (d *Device) ReadEvents(ctx context.Context, ch chan<- InputEvent) {
 		Events: unix.EPOLLIN,
 		Fd:     int32(d.fd),
 	}); err != nil {
+		slog.Error("epoll_ctl failed", "err", err)
 		return
 	}
 
@@ -192,12 +195,10 @@ func (d *Device) ReadEvents(ctx context.Context, ch chan<- InputEvent) {
 			// The kernel writes exactly sizeof(struct input_event) = 24 bytes per
 			// event, matching the layout of our InputEvent struct.
 			if err := binary.Read(d.file, binary.NativeEndian, &ev); err != nil {
+				slog.Error("failed to read input event", "err", err)
 				return
 			}
-			// Drop EV_MSC (raw scan codes) — uinput does not need them.
-			if ev.Type == EvMsc {
-				continue
-			}
+			// Forward all events including EV_MSC — some applications need scan codes.
 			select {
 			case ch <- ev:
 			case <-ctx.Done():

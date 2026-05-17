@@ -19,15 +19,15 @@ type InputDevice interface {
 
 // OutputDevice writes keyboard events to a virtual device.
 type OutputDevice interface {
-	WriteEvent(evType, code uint16, value int32) error
-	WriteSyn() error
+	WriteEvent(timeSec, timeUsec int64, evType, code uint16, value int32) error
+	WriteSyn(timeSec, timeUsec int64) error
 	Close() error
 }
 
 // Remapper is the top-level remapping engine.
 type Remapper struct {
-	in          InputDevice
-	out         OutputDevice
+	in           InputDevice
+	out          OutputDevice
 	focusTracker focus.Tracker
 	targetTitle  string
 	mu           sync.RWMutex
@@ -107,17 +107,24 @@ func (r *Remapper) Run(ctx context.Context) error {
 
 // processEvent handles a single input event: forwarding, suppressing, or remapping it.
 func (r *Remapper) processEvent(ev input.InputEvent) {
+	// Forward SYN events as-is to preserve original event batching.
+	if ev.Type == input.EvSyn {
+		r.out.WriteSyn(ev.TimeSec, ev.TimeUsec) //nolint:errcheck
+		return
+	}
+
 	if ev.Type != input.EvKey {
-		r.out.WriteEvent(ev.Type, ev.Code, ev.Value) //nolint:errcheck
+		slog.Debug("non-key event", "type", ev.Type, "code", ev.Code, "value", ev.Value)
+		r.out.WriteEvent(ev.TimeSec, ev.TimeUsec, ev.Type, ev.Code, ev.Value) //nolint:errcheck
 		return
 	}
 
 	if r.focusTracker != nil {
 		focused, err := r.focusTracker.IsFocused(r.targetTitle)
 		if err != nil || !focused {
-			slog.Debug("key suppressed (not focused)", "code", ev.Code)
-			r.out.WriteEvent(ev.Type, ev.Code, ev.Value) //nolint:errcheck
-			r.out.WriteSyn()                             //nolint:errcheck
+			slog.Debug("key suppressed (not focused)", "code", ev.Code, "value", ev.Value)
+			r.out.WriteEvent(ev.TimeSec, ev.TimeUsec, ev.Type, ev.Code, ev.Value) //nolint:errcheck
+			// Don't emit SYN here - let the original SYN come through
 			return
 		}
 	}
@@ -128,14 +135,14 @@ func (r *Remapper) processEvent(ev input.InputEvent) {
 
 	outCode := ev.Code
 	if ok {
-		slog.Debug("key remapped", "from", ev.Code, "to", mapped)
+		slog.Debug("key remapped", "from", ev.Code, "to", mapped, "value", ev.Value)
 		outCode = mapped
 	} else {
-		slog.Debug("key pass-through", "code", ev.Code)
+		slog.Debug("key pass-through", "code", ev.Code, "value", ev.Value)
 	}
 
-	r.out.WriteEvent(ev.Type, outCode, ev.Value) //nolint:errcheck
-	r.out.WriteSyn()                              //nolint:errcheck
+	r.out.WriteEvent(ev.TimeSec, ev.TimeUsec, ev.Type, outCode, ev.Value) //nolint:errcheck
+	// Don't emit SYN here - let the original SYN come through
 }
 
 // Reload replaces the active keymap with the provided one without restarting

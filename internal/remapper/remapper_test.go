@@ -73,14 +73,14 @@ type mockOutput struct {
 	closed   bool
 }
 
-func (m *mockOutput) WriteEvent(evType, code uint16, value int32) error {
+func (m *mockOutput) WriteEvent(timeSec, timeUsec int64, evType, code uint16, value int32) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.events = append(m.events, writeCall{evType, code, value})
 	return nil
 }
 
-func (m *mockOutput) WriteSyn() error {
+func (m *mockOutput) WriteSyn(timeSec, timeUsec int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.synCount++
