@@ -19,6 +19,7 @@ Remapping is active **only while the target game window is in focus**, so normal
 | [remapper.md](remapper.md) | Core remapping loop | Complete |
 | [cli.md](cli.md) | CLI behaviour & flags | Complete |
 | [ci.md](ci.md) | CI/CD workflows & release automation | Draft |
+| [install.md](install.md) | Installation & uninstallation scripts | Draft |
 
 ## Package Layout
 
