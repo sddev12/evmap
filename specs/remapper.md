@@ -56,8 +56,8 @@ type InputDevice interface {
 }
 
 type OutputDevice interface {
-    WriteEvent(evType, code uint16, value int32) error
-    WriteSyn() error
+    WriteEvent(timeSec, timeUsec int64, evType, code uint16, value int32) error
+    WriteSyn(timeSec, timeUsec int64) error
     Close() error
 }
 ```
@@ -91,25 +91,34 @@ for {
 }
 
 process(ev):
+    if ev.Type == EvSyn:
+        // Forward SYN events as-is to preserve original event batching.
+        // Applications expect MSC_SCAN and KEY_* to be in the same batch
+        // (sharing the same timestamp), so we forward the original SYN
+        // rather than generating new ones.
+        out.WriteSyn(ev.TimeSec, ev.TimeUsec)
+        return
+
     if ev.Type != EvKey:
-        // Forward EV_SYN events as-is; other types are not expected but
-        // should be forwarded to avoid breaking event batches.
-        out.WriteEvent(ev.Type, ev.Code, ev.Value)
+        // Forward non-key events (e.g. EV_MSC) with original timestamp.
+        // Some applications require MSC_SCAN events alongside key events.
+        out.WriteEvent(ev.TimeSec, ev.TimeUsec, ev.Type, ev.Code, ev.Value)
         return
 
     if focusTracker != nil && !focusTracker.IsFocused(targetTitle):
         // Game not in focus — emit original event unchanged.
-        out.WriteEvent(ev.Type, ev.Code, ev.Value)
-        out.WriteSyn()
+        // Do not call WriteSyn here; the original SYN will arrive separately.
+        out.WriteEvent(ev.TimeSec, ev.TimeUsec, ev.Type, ev.Code, ev.Value)
         return
 
     // Apply keymap
     outCode := ev.Code
-    if mapped, ok := keymap[ev.Code]; ok {
+    if mapped, ok := keymap[ev.Code]; ok:
         outCode = mapped
     }
-    out.WriteEvent(ev.Type, outCode, ev.Value)
-    out.WriteSyn()
+    // Write remapped (or unmapped) key event with original timestamp.
+    // Do not call WriteSyn here; the original SYN will arrive separately.
+    out.WriteEvent(ev.TimeSec, ev.TimeUsec, ev.Type, outCode, ev.Value)
 ```
 
 ---
@@ -203,7 +212,7 @@ All log output uses `log/slog` at the level configured in `AppConfig.LogLevel`.
 **When** `Reload` is called with an invalid keymap (unknown key name)  
 **Then** an error is returned and `KEY_UP` events still map to `KEY_W`
 
-### RMP-10 — SYN_REPORT is emitted after every key event
-**Given** any key event (press, release, or repeat)  
-**When** the event is processed  
-**Then** `WriteSyn()` is called exactly once after the corresponding `WriteEvent` call
+### RMP-10 — SYN events are forwarded from the input stream
+**Given** a stream of events including `EV_SYN`/`SYN_REPORT`  
+**When** the events are processed  
+**Then** `WriteSyn()` is called for each `EV_SYN` event with its original timestamp preserved, and no additional `WriteSyn()` calls are made after key events

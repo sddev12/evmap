@@ -84,7 +84,7 @@ After `Open` returns:
 `ReadEvents(ctx context.Context, ch chan<- InputEvent)` runs an epoll-based read loop and is intended to be launched as a goroutine.
 
 - It uses `epoll_wait` with a 50 ms timeout so that context cancellation is noticed within ~50 ms without a busy-wait loop.
-- `EV_MSC` (raw scan-code) events are silently dropped before being sent to `ch`; they are internal to the kernel and not useful to the remapper.
+- **All event types** (including `EV_MSC`, `EV_KEY`, and `EV_SYN`) are forwarded to `ch`. Applications may expect MSC_SCAN events alongside key events, so these must be preserved and emitted by the virtual keyboard.
 - When `ctx` is cancelled the function returns, leaving `ch` open (the remapper owns the channel lifetime).
 - I/O errors other than `EINTR` cause the function to return silently; the remapper detects the closed loop by observing that no further events arrive.
 
@@ -126,10 +126,10 @@ After `Open` returns:
 **When** a key-press and key-release are generated on that device  
 **Then** both events arrive on `ch` with `Type == EvKey` and `Value` of `1` and `0` respectively
 
-### INP-06 — ReadEvents drops EV_MSC events
+### INP-06 — ReadEvents forwards EV_MSC events
 **Given** a `*Device` opened on a test input device  
 **When** the device emits an `EV_MSC` scan-code event followed by a key press  
-**Then** only the key press arrives on `ch` (the `EV_MSC` event is dropped)
+**Then** both the `EV_MSC` event and the key press arrive on `ch` in order
 
 ### INP-07 — ReadEvents stops when context is cancelled
 **Given** a running `ReadEvents` goroutine  
