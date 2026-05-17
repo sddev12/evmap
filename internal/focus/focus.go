@@ -19,7 +19,7 @@ var (
 	ErrNoDisplay = errors.New("no display server detected")
 
 	// ErrUnimplemented is returned by New for Wayland compositors whose tracker
-	// has not yet been implemented (Hyprland, KWin).
+	// has not yet been implemented (KWin).
 	ErrUnimplemented = errors.New("tracker not yet implemented for this compositor")
 
 	// ErrClosed is returned by IsFocused after Close has been called.
